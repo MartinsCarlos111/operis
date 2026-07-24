@@ -1,0 +1,23 @@
+# Dockerfile para geração do banco de dados local (localhost).
+# Aplica as migrations do Prisma e executa o seed contra o Postgres do compose.
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Só o necessário para instalar dependências (cache de layer).
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Schema, migrations e seed do Prisma.
+COPY prisma ./prisma
+# tsconfig usado pelo tsx ao rodar o seed.ts.
+COPY tsconfig.json ./
+# O seed.ts importa de src/ (ex.: ScryptHasherSenha), então src precisa existir.
+COPY src ./src
+
+# Gera o client do Prisma dentro da imagem.
+RUN npx prisma generate
+
+# Ao subir: aplica migrations e semeia o banco.
+# migrate deploy é idempotente — seguro rodar de novo.
+CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma db seed"]

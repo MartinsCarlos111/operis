@@ -1,0 +1,244 @@
+/// Schema ÚNICO do operis. Convive aqui o domínio de negócio (estabelecimentos,
+/// usuários, RBAC) e as tabelas dedicadas de administração da plataforma
+/// (Control Plane: tenants, super-admins) — mesmo banco, tabelas separadas.
+/// Este mesmo schema é replicado via migration nos bancos dedicados dos
+/// tenants registrados em TenantDatabase.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Status genérico de atividade. Substitui booleans "ativo" por um enum
+/// autodocumentado — o mesmo vocabulário para o conceito "está ativo?" em
+/// todo o domínio (Linguagem Ubíqua: um termo, um significado).
+enum StatusRecurso {
+  ATIVO
+  INATIVO
+}
+
+model Estabelecimento {
+  idEstabelecimento String        @id @default(uuid()) @db.Uuid
+  descricao         String
+  status            StatusRecurso @default(ATIVO)
+
+  // Recursos/módulos do estabelecimento — enum de status, não boolean,
+  // para documentar explicitamente o estado de cada módulo.
+  impressoras StatusRecurso @default(INATIVO)
+  coletores   StatusRecurso @default(INATIVO)
+  checklist   StatusRecurso @default(INATIVO)
+  manufatura  StatusRecurso @default(INATIVO)
+
+  niveisAcesso NivelAcesso[]
+  vinculos     UsuarioEstabelecimento[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("estabelecimentos")
+}
+
+/// Catálogo de permissões. Nomes no padrão `grupo` ou `grupo:acao`
+/// (ex.: "principal:list", "manufatura:create"). Os grupos espelham os
+/// módulos do estabelecimento (principal, impressoras, coletores, checklist,
+/// manufatura). É a fonte para o front listar/selecionar permissões.
+model Permissao {
+  idPermissao String @id @default(uuid()) @db.Uuid
+  /// Chave única no padrão grupo:acao usada na verificação em runtime.
+  chave       String @unique
+  grupo       String
+  descricao   String
+
+  niveis NivelAcessoPermissao[]
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  @@index([grupo])
+  @@map("permissoes")
+}
+
+/// Nível de acesso (perfil), escopado por estabelecimento — multi-tenant.
+/// Cada nível seleciona um subconjunto de permissões do catálogo.
+model NivelAcesso {
+  idNivelAcesso String        @id @default(uuid()) @db.Uuid
+  nome          String
+  descricao     String        @default("")
+  status        StatusRecurso @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  permissoes NivelAcessoPermissao[]
+  vinculos   UsuarioEstabelecimento[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Nome do nível é único dentro do estabelecimento.
+  @@unique([estabelecimentoId, nome])
+  @@index([estabelecimentoId])
+  @@map("niveis_acesso")
+}
+
+/// Junção N:N entre nível de acesso e permissão (as permissões que aquele
+/// nível disponibiliza).
+model NivelAcessoPermissao {
+  nivelAcessoId String @map("nivel_acesso_id") @db.Uuid
+  permissaoId   String @map("permissao_id") @db.Uuid
+
+  nivelAcesso NivelAcesso @relation(fields: [nivelAcessoId], references: [idNivelAcesso], onDelete: Cascade)
+  permissao   Permissao   @relation(fields: [permissaoId], references: [idPermissao], onDelete: Cascade)
+
+  @@id([nivelAcessoId, permissaoId])
+  @@index([permissaoId])
+  @@map("niveis_acesso_permissoes")
+}
+
+model Usuario {
+  idUsuario String  @id @default(uuid()) @db.Uuid
+  nome      String
+  email     String  @unique
+  biometria Boolean @default(false)
+
+  status StatusRecurso @default(ATIVO)
+
+  // Conjunto flexível de regras de login (expiração de senha, MFA, etc).
+  // JSON porque a forma varia e não queremos migração a cada nova política.
+  politicasLogin Json? @map("politicas_login")
+
+  // Um usuário pode estar vinculado a vários estabelecimentos, com um nível
+  // de acesso em cada (multi-tenant). O vínculo carrega o nível.
+  vinculos UsuarioEstabelecimento[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("usuarios")
+}
+
+/// Vínculo usuário ↔ estabelecimento ↔ nível de acesso. Resolve "qual nível
+/// (e portanto quais permissões) este usuário tem neste estabelecimento".
+/// PK composta [usuarioId, estabelecimentoId].
+model UsuarioEstabelecimento {
+  usuarioId         String        @map("usuario_id") @db.Uuid
+  estabelecimentoId String        @map("estabelecimento_id") @db.Uuid
+  nivelAcessoId     String        @map("nivel_acesso_id") @db.Uuid
+  status            StatusRecurso @default(ATIVO)
+
+  usuario         Usuario         @relation(fields: [usuarioId], references: [idUsuario], onDelete: Cascade)
+  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  nivelAcesso     NivelAcesso     @relation(fields: [nivelAcessoId], references: [idNivelAcesso])
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@id([usuarioId, estabelecimentoId])
+  @@index([estabelecimentoId])
+  @@index([nivelAcessoId])
+  @@map("usuarios_estabelecimentos")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTROL PLANE — tabelas dedicadas de administração da plataforma, no MESMO
+// banco. Só o painel /admin (super-admins) enxerga estas tabelas; nenhum
+// módulo de negócio deve referenciá-las.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Situação operacional da conexão com o banco dedicado de um tenant.
+enum StatusConexao {
+  PROVISIONANDO
+  ONLINE
+  OFFLINE
+  ERRO
+}
+
+/// Tenant — o cliente da plataforma. Separado de TenantDatabase para permitir
+/// trocar de banco (migração de provedor, por exemplo) sem recriar o tenant.
+/// Só super-admins sabem que esta tabela existe.
+model Tenant {
+  idTenant String        @id @default(uuid()) @db.Uuid
+  nome     String
+  slug     String        @unique
+  status   StatusRecurso @default(ATIVO)
+
+  database        TenantDatabase?
+  administradores TenantAdministrador[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("tenants")
+}
+
+/// Configuração de conexão com o banco dedicado do tenant. Host/porta/nome em
+/// texto; a senha SEMPRE cifrada (AES-256-GCM) — só o EncryptionService
+/// decifra, apenas no momento de abrir a conexão real. Nunca exposta na API.
+model TenantDatabase {
+  idTenantDatabase String @id @default(uuid()) @db.Uuid
+
+  tenantId String @unique @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [idTenant], onDelete: Cascade)
+
+  databaseProvider String @default("postgresql") @map("database_provider")
+  databaseHost     String @map("database_host")
+  databasePort     Int    @map("database_port")
+  databaseName     String @map("database_name")
+  databaseUsername String @map("database_username")
+
+  /// iv + authTag + ciphertext serializados. Nunca em texto puro.
+  databasePasswordEncrypted String @map("database_password_encrypted")
+  /// Versão da estratégia de criptografia — permite rotacionar a chave mestra
+  /// sem quebrar registros antigos (reencriptação gradual).
+  databaseEncryptionVersion Int    @default(1) @map("database_encryption_version")
+
+  sslEnabled Boolean @default(true) @map("ssl_enabled")
+
+  connectionStatus StatusConexao @default(PROVISIONANDO) @map("connection_status")
+  lastConnectionAt DateTime?     @map("last_connection_at")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("tenants_databases")
+}
+
+/// Administrador de UM tenant específico. Vive no Control Plane (não no banco
+/// do tenant) porque o login precisa descobrir "qual tenant" a partir do email
+/// antes de saber qual banco consultar. Criado pelo super-admin junto com o
+/// tenant.
+model TenantAdministrador {
+  idTenantAdministrador String        @id @default(uuid()) @db.Uuid
+  nome                  String
+  email                 String        @unique
+  senhaHash             String        @map("senha_hash")
+  status                StatusRecurso @default(ATIVO)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [idTenant], onDelete: Cascade)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([tenantId])
+  @@map("tenants_administradores")
+}
+
+/// Super-administrador — equipe interna de manutenção/suporte do operis.
+/// SEM relação com Tenant: são os únicos que sabem que tenants existem.
+/// Login isolado (rotas /admin, painel próprio), nunca compartilhado com
+/// TenantAdministrador.
+model SuperAdmin {
+  idSuperAdmin String        @id @default(uuid()) @db.Uuid
+  nome         String
+  email        String        @unique
+  senhaHash    String        @map("senha_hash")
+  status       StatusRecurso @default(ATIVO)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("super_admins")
+}
