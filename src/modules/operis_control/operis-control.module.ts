@@ -6,7 +6,13 @@ import { TestarConexaoTenantUseCase } from './application/use-cases/testar-conex
 import { CriarSuperAdminUseCase } from './application/use-cases/criar-super-admin.use-case.js';
 import { AutenticarSuperAdminUseCase } from './application/use-cases/autenticar-super-admin.use-case.js';
 import { AutenticarTenantAdministradorUseCase } from './application/use-cases/autenticar-tenant-administrador.use-case.js';
+import { ConfigurarRabbitMqTenantUseCase } from './application/use-cases/configurar-rabbitmq-tenant.use-case.js';
+import { ObterRabbitMqTenantUseCase } from './application/use-cases/obter-rabbitmq-tenant.use-case.js';
+import { ConfigurarSmtpTenantUseCase } from './application/use-cases/configurar-smtp-tenant.use-case.js';
+import { ObterSmtpTenantUseCase } from './application/use-cases/obter-smtp-tenant.use-case.js';
 import { PrismaTenantRepository } from './infrastructure/persistence/prisma-tenant.repository.js';
+import { PrismaConfiguracaoRabbitMqTenantRepository } from './infrastructure/persistence/prisma-configuracao-rabbitmq-tenant.repository.js';
+import { PrismaConfiguracaoSmtpTenantRepository } from './infrastructure/persistence/prisma-configuracao-smtp-tenant.repository.js';
 import { PrismaSuperAdminRepository } from './infrastructure/persistence/prisma-super-admin.repository.js';
 import { PrismaTenantAdministradorRepository } from './infrastructure/persistence/prisma-tenant-administrador.repository.js';
 import { AesGcmEncryptionService } from './infrastructure/gateways/aes-gcm-encryption.service.js';
@@ -34,6 +40,8 @@ export function construirModuloOperisControl(
   const tenants = new PrismaTenantRepository(prisma);
   const superAdmins = new PrismaSuperAdminRepository(prisma);
   const administradores = new PrismaTenantAdministradorRepository(prisma);
+  const rabbitmqConfigs = new PrismaConfiguracaoRabbitMqTenantRepository(prisma);
+  const smtpConfigs = new PrismaConfiguracaoSmtpTenantRepository(prisma);
 
   const encryption = new AesGcmEncryptionService(opcoes.chaveMestraCriptografia);
   const hasher = new ScryptHasherSenha();
@@ -65,6 +73,15 @@ export function construirModuloOperisControl(
       ),
       listarTenants: new ListarTenantsUseCase(tenants),
       testarConexaoTenant: new TestarConexaoTenantUseCase(tenants, encryption, validadorConexao),
+      configurarRabbitMqTenant: new ConfigurarRabbitMqTenantUseCase(
+        rabbitmqConfigs,
+        tenants,
+        encryption,
+        ids,
+      ),
+      obterRabbitMqTenant: new ObterRabbitMqTenantUseCase(rabbitmqConfigs),
+      configurarSmtpTenant: new ConfigurarSmtpTenantUseCase(smtpConfigs, tenants, encryption, ids),
+      obterSmtpTenant: new ObterSmtpTenantUseCase(smtpConfigs),
     }),
   };
 }

@@ -9,6 +9,13 @@ import { ConnectionManager, PrismaFactoryPadrao } from '@shared/tenant-runtime/i
 import { CryptoGeradorId } from '@shared/infra/gateways/crypto-gerador-id.js';
 import { construirModuloUsuarios } from '@modules/usuarios/usuarios.module.js';
 import { construirModuloEstabelecimentos } from '@modules/estabelecimentos/estabelecimentos.module.js';
+import { construirModuloAreas } from '@modules/areas/areas.module.js';
+import { construirModuloImpressoras } from '@modules/impressoras/impressoras.module.js';
+import { construirModuloNotificacoes } from '@modules/notificacoes/notificacoes.module.js';
+import { construirModuloEstabelecimentoImpressoras } from '@modules/estabelecimento_impressoras/estabelecimento-impressoras.module.js';
+import { construirModuloAreaUsuarios } from '@modules/area_usuarios/area-usuarios.module.js';
+import { construirModuloCrachas } from '@modules/crachas/crachas.module.js';
+import { construirModuloLayouts } from '@modules/layouts/layouts.module.js';
 import { construirModuloOperisControl } from '@modules/operis_control/operis-control.module.js';
 
 export interface BuildAppOptions {
@@ -78,9 +85,23 @@ export function buildApp({
   // 3. Módulos de negócio — montam repositórios sobre o banco do tenant.
   const usuarios = construirModuloUsuarios(ids, preResolverTenant);
   const estabelecimentos = construirModuloEstabelecimentos(ids, usuarios.cadeia);
+  const areas = construirModuloAreas(ids, usuarios.cadeia);
+  const impressoras = construirModuloImpressoras(ids, usuarios.cadeia);
+  const notificacoes = construirModuloNotificacoes(ids, usuarios.cadeia);
+  const estabelecimentoImpressoras = construirModuloEstabelecimentoImpressoras(usuarios.cadeia);
+  const areaUsuarios = construirModuloAreaUsuarios(usuarios.cadeia);
+  const crachas = construirModuloCrachas(ids, usuarios.cadeia);
+  const layouts = construirModuloLayouts(ids, usuarios.cadeia);
 
   app.register(usuarios.routes);
   app.register(estabelecimentos.routes);
+  app.register(areas.routes);
+  app.register(impressoras.routes);
+  app.register(notificacoes.routes);
+  app.register(estabelecimentoImpressoras.routes);
+  app.register(areaUsuarios.routes);
+  app.register(crachas.routes);
+  app.register(layouts.routes);
   app.register(operisControl.routes);
 
   return { app, connectionManager };

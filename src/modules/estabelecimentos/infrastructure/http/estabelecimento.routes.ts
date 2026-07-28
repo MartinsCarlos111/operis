@@ -4,6 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { StatusRecurso } from '@shared/domain/status-recurso.js';
 import type { CriarEstabelecimentoUseCase } from '../../application/use-cases/criar-estabelecimento.use-case.js';
+import type { ListarEstabelecimentosUseCase } from '../../application/use-cases/listar-estabelecimentos.use-case.js';
 import type { CriarNivelAcessoUseCase } from '../../application/use-cases/criar-nivel-acesso.use-case.js';
 import type { ListarNiveisAcessoUseCase } from '../../application/use-cases/listar-niveis-acesso.use-case.js';
 import type { ListarPermissoesUseCase } from '../../application/use-cases/listar-permissoes.use-case.js';
@@ -31,6 +32,7 @@ const criarNivelAcessoBody = z.object({
 /** Use-cases do contexto, montados sobre o PrismaClient de UM tenant. */
 export interface EstabelecimentoUseCases {
   criarEstabelecimento: CriarEstabelecimentoUseCase;
+  listarEstabelecimentos: ListarEstabelecimentosUseCase;
   criarNivelAcesso: CriarNivelAcessoUseCase;
   listarNiveisAcesso: ListarNiveisAcessoUseCase;
   listarPermissoes: ListarPermissoesUseCase;
@@ -78,6 +80,26 @@ export function estabelecimentoRoutes(deps: EstabelecimentoRoutesDeps) {
         const { criarEstabelecimento } = deps.montarUseCases(request.prismaTenant);
         const dto = await criarEstabelecimento.executar(request.body);
         return reply.status(201).send(dto);
+      },
+    );
+
+    // Lista os estabelecimentos do tenant. NÃO exige x-estabelecimento-id: é a
+    // rota que alimenta a tela de seleção (resolve o ovo-e-galinha — o usuário
+    // ainda não escolheu um estabelecimento).
+    app.get(
+      '/estabelecimentos',
+      {
+        preHandler: [deps.autenticar, deps.resolverTenant],
+        schema: {
+          tags: ['estabelecimentos'],
+          summary: 'Lista os estabelecimentos do tenant (para a seleção)',
+          security: [{ bearerAuth: [] }],
+        },
+      },
+      async (request, reply) => {
+        const { listarEstabelecimentos } = deps.montarUseCases(request.prismaTenant);
+        const dtos = await listarEstabelecimentos.executar();
+        return reply.status(200).send(dtos);
       },
     );
 

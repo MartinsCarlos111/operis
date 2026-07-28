@@ -13,6 +13,13 @@ export class PrismaEstabelecimentoRepository implements EstabelecimentoRepositor
     return row ? EstabelecimentoMapper.paraDominio(row) : null;
   }
 
+  async listar(): Promise<Estabelecimento[]> {
+    const rows = await this.prisma.estabelecimento.findMany({
+      orderBy: { criadoEm: 'desc' },
+    });
+    return rows.map(EstabelecimentoMapper.paraDominio);
+  }
+
   async salvar(estabelecimento: Estabelecimento): Promise<void> {
     const data = EstabelecimentoMapper.paraPersistencia(estabelecimento);
     await this.prisma.estabelecimento.upsert({

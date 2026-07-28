@@ -20,6 +20,21 @@ enum StatusRecurso {
   INATIVO
 }
 
+/// Dedo de uma digital cadastrada (substitui as 10 colunas fixas do legado
+/// `Cracha`). Estruturado: permite 0..10 digitais por crachá sem colunas vazias.
+enum Dedo {
+  POLEGAR_ESQUERDO
+  INDICADOR_ESQUERDO
+  MEDIO_ESQUERDO
+  ANELAR_ESQUERDO
+  MINIMO_ESQUERDO
+  POLEGAR_DIREITO
+  INDICADOR_DIREITO
+  MEDIO_DIREITO
+  ANELAR_DIREITO
+  MINIMO_DIREITO
+}
+
 model Estabelecimento {
   idEstabelecimento String        @id @default(uuid()) @db.Uuid
   descricao         String
@@ -32,13 +47,237 @@ model Estabelecimento {
   checklist   StatusRecurso @default(INATIVO)
   manufatura  StatusRecurso @default(INATIVO)
 
-  niveisAcesso NivelAcesso[]
-  vinculos     UsuarioEstabelecimento[]
+  niveisAcesso        NivelAcesso[]
+  vinculos            UsuarioEstabelecimento[]
+  areas               Area[]
+  impressorasVinculos EstabelecimentoImpressora[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   @@map("estabelecimentos")
+}
+
+/// Área de um estabelecimento (setor/local). Migrada de Octopus `Area`
+/// (Principal). As 50 colunas-coringa `AuxiliaresMenu` (intAux1..10, etc.) do
+/// legado foram descartadas — não eram expostas pela API e não têm uso de
+/// negócio; extras futuros entram como colunas nomeadas.
+///
+/// `codigo` (ex-`cdArea`) é o identificador natural de negócio, único dentro do
+/// estabelecimento; a PK é UUID, alinhada às demais tabelas do operis.
+model Area {
+  idArea    String @id @default(uuid()) @db.Uuid
+  /// Código de negócio da área (ex-cdArea). Único por estabelecimento.
+  codigo    String
+  descricao String
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  usuarios AreaUsuario[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Código único dentro do estabelecimento (paridade com a regra do AreaRN:
+  // "Área com o código X já cadastrada").
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("areas")
+}
+
+/// Junção N:N usuário ↔ área (migrada de Octopus `AreaUsuario`). Diz quais
+/// usuários operam em cada área. Usada, entre outras coisas, para bloquear a
+/// exclusão de uma área que ainda tem usuários vinculados (regra do AreaRN).
+/// PK composta [areaId, usuarioId] — sem `idAreaUsuario` surrogate do legado.
+model AreaUsuario {
+  areaId    String @map("area_id") @db.Uuid
+  usuarioId String @map("usuario_id") @db.Uuid
+
+  area    Area    @relation(fields: [areaId], references: [idArea], onDelete: Cascade)
+  usuario Usuario @relation(fields: [usuarioId], references: [idUsuario], onDelete: Cascade)
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  @@id([areaId, usuarioId])
+  @@index([usuarioId])
+  @@map("areas_usuarios")
+}
+
+/// Impressora — recurso GLOBAL do tenant (migrada de Octopus `Impressora`).
+/// No legado NÃO pertence a um estabelecimento: o vínculo é N:N via
+/// `EstabelecimentoImpressora` (módulo a migrar). Por isso o código é único no
+/// tenant inteiro. Colunas Aux do legado descartadas; IDs bigint→UUID.
+model Impressora {
+  idImpressora String @id @default(uuid()) @db.Uuid
+  /// Código de negócio (ex-cdImpressora). Único no tenant.
+  codigo       String @unique
+  descricao    String
+  /// Endereço de rede da impressora (ex-endereco; ip/host).
+  endereco     String
+
+  estabelecimentos EstabelecimentoImpressora[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("impressoras")
+}
+
+/// Vínculo N:N estabelecimento ↔ impressora (migrado de Octopus
+/// `EstabelecimentoImpressora`). Diz quais impressoras (globais) estão
+/// disponíveis em cada estabelecimento. PK composta — sem o surrogate
+/// `idEstabelecimentoImpressora` do legado.
+model EstabelecimentoImpressora {
+  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
+  impressoraId      String @map("impressora_id") @db.Uuid
+
+  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  impressora      Impressora      @relation(fields: [impressoraId], references: [idImpressora], onDelete: Cascade)
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  @@id([estabelecimentoId, impressoraId])
+  @@index([impressoraId])
+  @@map("estabelecimentos_impressoras")
+}
+
+/// Crachá (migrado de Octopus `Cracha`). Identifica uma pessoa nos terminais.
+/// As 10 colunas fixas de digital do legado viram a tabela filha
+/// `CrachaBiometria` (1:N) — modelo correto: 0..10 digitais, com formato do SDK
+/// e template cifrado. Colunas Aux descartadas; `ativo`(bool)→StatusRecurso.
+model Cracha {
+  idCracha String        @id @default(uuid()) @db.Uuid
+  /// Código de negócio (ex-cdCracha). Único no tenant.
+  codigo   String        @unique
+  nome     String
+  status   StatusRecurso @default(ATIVO)
+
+  biometrias CrachaBiometria[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("crachas")
+}
+
+/// Digital cadastrada de um crachá (1:N). Substitui as 10 colunas fixas do
+/// legado. O `template` é o vetor de minúcias do SDK, armazenado CIFRADO
+/// (AES-256-GCM via EncryptionService, como TenantDatabase) — dado biométrico
+/// sensível. `formato` registra qual SDK/padrão gerou o template (permite
+/// trocar de leitor no futuro). O enroll/match é feito pelo gateway externo
+/// `operis-bio-bridge`, não pelo backend.
+model CrachaBiometria {
+  idCrachaBiometria String @id @default(uuid()) @db.Uuid
+
+  crachaId String @map("cracha_id") @db.Uuid
+  cracha   Cracha @relation(fields: [crachaId], references: [idCracha], onDelete: Cascade)
+
+  dedo Dedo
+
+  /// Template de minúcias do SDK, serializado e cifrado (nunca em texto puro).
+  templateCifrado String @map("template_cifrado")
+  /// Versão da estratégia de criptografia — rotação de chave sem quebrar o antigo.
+  versaoCripto    Int    @default(1) @map("versao_cripto")
+  /// SDK/padrão que gerou o template (ex.: "NITGEN", "ISO_19794_2").
+  formato         String
+  /// Score de qualidade do enroll fornecido pelo SDK (0-100), quando disponível.
+  qualidade       Int?
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Um dedo só pode ter uma digital cadastrada por crachá.
+  @@unique([crachaId, dedo])
+  @@index([crachaId])
+  @@map("crachas_biometrias")
+}
+
+/// Variável de layout de etiqueta (migrada de Octopus `VariavelLayout`). Define
+/// um campo que pode ser referenciado num template de etiqueta, mapeando para o
+/// campo de origem em manufatura/coletores. Código único no tenant.
+model VariavelLayout {
+  idVariavel String @id @default(uuid()) @db.Uuid
+  /// Código de negócio (ex-cdVariavel). Único no tenant.
+  codigo     String @unique
+  descricao  String
+  /// Campo de origem na etiqueta de manufatura (ex-campoEtiquetaManufatura).
+  campoEtiquetaManufatura String @default("") @map("campo_etiqueta_manufatura")
+  /// Campo de origem na etiqueta de coletores (ex-campoEtiquetaColetores).
+  campoEtiquetaColetores  String @default("") @map("campo_etiqueta_coletores")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("variaveis_layout")
+}
+
+/// Layout de etiqueta (migrado de Octopus `LayoutEtiqueta`). Guarda o template
+/// ZPL (linguagem das impressoras Zebra) que é enviado à impressora. Código
+/// único no tenant.
+model LayoutEtiqueta {
+  idLayout  String @id @default(uuid()) @db.Uuid
+  /// Código de negócio (ex-cdLayout). Único no tenant.
+  codigo    String @unique
+  descricao String
+  /// Template ZPL da etiqueta (ex-layoutZpl).
+  zpl       String @default("")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("layouts_etiqueta")
+}
+
+/// Regra de notificação (migrada de Octopus `RegraNotificacao`). Define QUANDO e
+/// PARA QUEM notificar sobre um registro de um produto/tabela. O motor de
+/// disparo (avaliação das condições em runtime) e o realtime NÃO fazem parte
+/// deste módulo — só o cadastro (regra + condições). `ativo` (bool no legado)
+/// vira StatusRecurso; código único no tenant; colunas Aux descartadas.
+model RegraNotificacao {
+  idRegraNotificacao String        @id @default(uuid()) @db.Uuid
+  /// Código de negócio (ex-cdRegraNotificacao). Único no tenant.
+  codigo             String        @unique
+  descricao          String
+  /// Destinatários da notificação (lista/expressão — texto livre no legado).
+  destinatarios      String        @default("")
+  /// Produto de origem (ex-cdProduto; ex.: "Manufatura").
+  produto            String        @default("")
+  /// Tabela monitorada (ex-dsTabela; ex.: "MOVIMENTOS").
+  tabela             String
+  /// Template/conteúdo da notificação (ex-dsConteudoNotificacao).
+  conteudo           String
+  status             StatusRecurso @default(ATIVO)
+
+  condicoes CondicaoNotificacao[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("regras_notificacao")
+}
+
+/// Condição de uma regra de notificação (migrada de `CondicaoNotificacao`).
+/// 1:N com RegraNotificacao — a regra dispara quando as condições casam.
+/// Cada condição = (campo, operador, valor).
+model CondicaoNotificacao {
+  idCondicaoNotificacao String @id @default(uuid()) @db.Uuid
+
+  regraNotificacaoId String           @map("regra_notificacao_id") @db.Uuid
+  regra              RegraNotificacao @relation(fields: [regraNotificacaoId], references: [idRegraNotificacao], onDelete: Cascade)
+
+  /// Campo monitorado (ex-cdCampo).
+  campo    String
+  /// Operador da condição (ex-cdCondicao; ex.: "=", ">", "CONTEM").
+  operador String
+  /// Valor comparado (ex-dsValor).
+  valor    String @default("")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([regraNotificacaoId])
+  @@map("condicoes_notificacao")
 }
 
 /// Catálogo de permissões. Nomes no padrão `grupo` ou `grupo:acao`
@@ -112,6 +351,7 @@ model Usuario {
   // Um usuário pode estar vinculado a vários estabelecimentos, com um nível
   // de acesso em cada (multi-tenant). O vínculo carrega o nível.
   vinculos UsuarioEstabelecimento[]
+  areas    AreaUsuario[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -165,6 +405,8 @@ model Tenant {
   status   StatusRecurso @default(ATIVO)
 
   database        TenantDatabase?
+  rabbitmq        TenantRabbitMq?
+  smtp            TenantSmtp?
   administradores TenantAdministrador[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
@@ -203,6 +445,59 @@ model TenantDatabase {
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   @@map("tenants_databases")
+}
+
+/// Configuração do broker RabbitMQ dedicado de um tenant — parte do Control
+/// Plane, gerida pelo super-admin no painel /admin. Segue o mesmo padrão de
+/// TenantDatabase: a senha vai apenas cifrada (AES-256-GCM via EncryptionService,
+/// com versão para rotação de chave), nunca em texto puro.
+model TenantRabbitMq {
+  idTenantRabbitMq String @id @default(uuid()) @db.Uuid
+
+  tenantId String @unique @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [idTenant], onDelete: Cascade)
+
+  host        String
+  porta       Int
+  virtualHost String @default("/") @map("virtual_host")
+  usuario     String
+
+  /// iv + authTag + ciphertext serializados. Nunca em texto puro.
+  senhaEncrypted   String @map("senha_encrypted")
+  encryptionVersion Int   @default(1) @map("encryption_version")
+
+  sslEnabled Boolean @default(false) @map("ssl_enabled")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("tenants_rabbitmq")
+}
+
+/// Configuração do servidor SMTP dedicado de um tenant — parte do Control Plane,
+/// gerida pelo super-admin. Mesmo padrão de segredo cifrado do TenantDatabase.
+model TenantSmtp {
+  idTenantSmtp String @id @default(uuid()) @db.Uuid
+
+  tenantId String @unique @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [idTenant], onDelete: Cascade)
+
+  host    String
+  porta   Int
+  usuario String
+  /// Remetente padrão (From) das mensagens enviadas por este tenant.
+  remetente String @default("")
+
+  /// iv + authTag + ciphertext serializados. Nunca em texto puro.
+  senhaEncrypted    String @map("senha_encrypted")
+  encryptionVersion Int    @default(1) @map("encryption_version")
+
+  sslEnabled Boolean @default(true) @map("ssl_enabled")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("tenants_smtp")
 }
 
 /// Administrador de UM tenant específico. Vive no Control Plane (não no banco

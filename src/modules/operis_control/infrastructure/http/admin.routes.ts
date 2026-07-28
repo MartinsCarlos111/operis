@@ -7,6 +7,10 @@ import type { TestarConexaoTenantUseCase } from '../../application/use-cases/tes
 import type { CriarSuperAdminUseCase } from '../../application/use-cases/criar-super-admin.use-case.js';
 import type { AutenticarSuperAdminUseCase } from '../../application/use-cases/autenticar-super-admin.use-case.js';
 import type { AutenticarTenantAdministradorUseCase } from '../../application/use-cases/autenticar-tenant-administrador.use-case.js';
+import type { ConfigurarRabbitMqTenantUseCase } from '../../application/use-cases/configurar-rabbitmq-tenant.use-case.js';
+import type { ObterRabbitMqTenantUseCase } from '../../application/use-cases/obter-rabbitmq-tenant.use-case.js';
+import type { ConfigurarSmtpTenantUseCase } from '../../application/use-cases/configurar-smtp-tenant.use-case.js';
+import type { ObterSmtpTenantUseCase } from '../../application/use-cases/obter-smtp-tenant.use-case.js';
 import { autenticarSuperAdmin } from './autenticacao-admin.js';
 
 const loginBody = z.object({
@@ -41,6 +45,26 @@ const criarTenantBody = z.object({
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
+/** Config do broker RabbitMQ do tenant. `senha` é texto puro só em trânsito. */
+const configurarRabbitMqBody = z.object({
+  host: z.string().min(1),
+  porta: z.number().int().min(1).max(65535),
+  usuario: z.string().min(1),
+  senha: z.string().min(1),
+  virtualHost: z.string().optional(),
+  sslHabilitado: z.boolean().optional(),
+});
+
+/** Config do servidor SMTP do tenant. `senha` é texto puro só em trânsito. */
+const configurarSmtpBody = z.object({
+  host: z.string().min(1),
+  porta: z.number().int().min(1).max(65535),
+  usuario: z.string().min(1),
+  senha: z.string().min(1),
+  remetente: z.string().optional(),
+  sslHabilitado: z.boolean().optional(),
+});
+
 const VALIDADE_TOKEN = '8h';
 
 export interface AdminRoutesDeps {
@@ -50,6 +74,10 @@ export interface AdminRoutesDeps {
   criarTenant: CriarTenantUseCase;
   listarTenants: ListarTenantsUseCase;
   testarConexaoTenant: TestarConexaoTenantUseCase;
+  configurarRabbitMqTenant: ConfigurarRabbitMqTenantUseCase;
+  obterRabbitMqTenant: ObterRabbitMqTenantUseCase;
+  configurarSmtpTenant: ConfigurarSmtpTenantUseCase;
+  obterSmtpTenant: ObterSmtpTenantUseCase;
 }
 
 /**
@@ -143,6 +171,84 @@ export function adminRoutes(deps: AdminRoutesDeps) {
       },
       async (request, reply) => {
         const dto = await deps.testarConexaoTenant.executar(request.params.id);
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // ── Configuração RabbitMQ do tenant (broker dedicado; senha cifrada) ──
+    app.put(
+      '/admin/tenants/:id/rabbitmq',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Cadastra/atualiza o broker RabbitMQ do tenant (senha cifrada)',
+          security: segurancaAdmin,
+          params: tenantParams,
+          body: configurarRabbitMqBody,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.configurarRabbitMqTenant.executar({
+          tenantId: request.params.id,
+          ...request.body,
+        });
+        return reply.status(200).send(dto);
+      },
+    );
+
+    app.get(
+      '/admin/tenants/:id/rabbitmq',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Obtém a config RabbitMQ do tenant (sem a senha)',
+          security: segurancaAdmin,
+          params: tenantParams,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.obterRabbitMqTenant.executar(request.params.id);
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // ── Configuração SMTP do tenant (servidor de e-mail; senha cifrada) ──
+    app.put(
+      '/admin/tenants/:id/smtp',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Cadastra/atualiza o servidor SMTP do tenant (senha cifrada)',
+          security: segurancaAdmin,
+          params: tenantParams,
+          body: configurarSmtpBody,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.configurarSmtpTenant.executar({
+          tenantId: request.params.id,
+          ...request.body,
+        });
+        return reply.status(200).send(dto);
+      },
+    );
+
+    app.get(
+      '/admin/tenants/:id/smtp',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Obtém a config SMTP do tenant (sem a senha)',
+          security: segurancaAdmin,
+          params: tenantParams,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.obterSmtpTenant.executar(request.params.id);
         return reply.status(200).send(dto);
       },
     );

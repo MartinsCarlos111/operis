@@ -6,5 +6,7 @@ import type { Estabelecimento } from '../entities/estabelecimento.js';
  */
 export interface EstabelecimentoRepository {
   buscarPorId(id: string): Promise<Estabelecimento | null>;
+  /** Todos os estabelecimentos do banco do tenant (mais recentes primeiro). */
+  listar(): Promise<Estabelecimento[]>;
   salvar(estabelecimento: Estabelecimento): Promise<void>;
 }

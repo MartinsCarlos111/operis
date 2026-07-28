@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { preHandlerAsyncHookHandler } from 'fastify';
 import type { GeradorId } from '@shared/domain/gerador-id.js';
 import { CriarEstabelecimentoUseCase } from './application/use-cases/criar-estabelecimento.use-case.js';
+import { ListarEstabelecimentosUseCase } from './application/use-cases/listar-estabelecimentos.use-case.js';
 import { CriarNivelAcessoUseCase } from './application/use-cases/criar-nivel-acesso.use-case.js';
 import { ListarNiveisAcessoUseCase } from './application/use-cases/listar-niveis-acesso.use-case.js';
 import { ListarPermissoesUseCase } from './application/use-cases/listar-permissoes.use-case.js';
@@ -36,6 +37,7 @@ export function construirModuloEstabelecimentos(
     const permissoes = new PrismaPermissaoRepository(prisma);
     return {
       criarEstabelecimento: new CriarEstabelecimentoUseCase(estabelecimentos, ids),
+      listarEstabelecimentos: new ListarEstabelecimentosUseCase(estabelecimentos),
       criarNivelAcesso: new CriarNivelAcessoUseCase(niveis, permissoes, estabelecimentos, ids),
       listarNiveisAcesso: new ListarNiveisAcessoUseCase(niveis),
       listarPermissoes: new ListarPermissoesUseCase(permissoes),

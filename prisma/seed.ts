@@ -13,6 +13,16 @@ import { ScryptHasherSenha } from '../src/modules/operis_control/infrastructure/
  */
 const GRUPOS_PERMISSOES: Record<string, { acoes: string[]; descricao: string }> = {
   principal: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo principal' },
+  areas: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Cadastro de áreas' },
+  crachas: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Cadastro de crachás' },
+  layouts: {
+    acoes: ['list', 'create', 'update', 'delete'],
+    descricao: 'Variáveis e layouts de etiqueta',
+  },
+  notificacoes: {
+    acoes: ['list', 'create', 'update', 'delete'],
+    descricao: 'Regras e condições de notificação',
+  },
   impressoras: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Gestão de impressoras' },
   coletores: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Gestão de coletores' },
   checklist: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo de checklist' },
