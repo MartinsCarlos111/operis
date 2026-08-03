@@ -9,6 +9,7 @@ import type { AutenticarSuperAdminUseCase } from '../../application/use-cases/au
 import type { AutenticarTenantAdministradorUseCase } from '../../application/use-cases/autenticar-tenant-administrador.use-case.js';
 import type { ConfigurarRabbitMqTenantUseCase } from '../../application/use-cases/configurar-rabbitmq-tenant.use-case.js';
 import type { ObterRabbitMqTenantUseCase } from '../../application/use-cases/obter-rabbitmq-tenant.use-case.js';
+import type { MonitorarBrokerTenantUseCase } from '../../application/use-cases/monitorar-broker-tenant.use-case.js';
 import type { ConfigurarSmtpTenantUseCase } from '../../application/use-cases/configurar-smtp-tenant.use-case.js';
 import type { ObterSmtpTenantUseCase } from '../../application/use-cases/obter-smtp-tenant.use-case.js';
 import { autenticarSuperAdmin } from './autenticacao-admin.js';
@@ -76,6 +77,7 @@ export interface AdminRoutesDeps {
   testarConexaoTenant: TestarConexaoTenantUseCase;
   configurarRabbitMqTenant: ConfigurarRabbitMqTenantUseCase;
   obterRabbitMqTenant: ObterRabbitMqTenantUseCase;
+  monitorarBrokerTenant: MonitorarBrokerTenantUseCase;
   configurarSmtpTenant: ConfigurarSmtpTenantUseCase;
   obterSmtpTenant: ObterSmtpTenantUseCase;
 }
@@ -210,6 +212,25 @@ export function adminRoutes(deps: AdminRoutesDeps) {
       },
       async (request, reply) => {
         const dto = await deps.obterRabbitMqTenant.executar(request.params.id);
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // Retrato operacional do broker: valida a conexão e lista os coletores
+    // conectados (client_id). Alimenta a tela "Broker IoT".
+    app.get(
+      '/admin/tenants/:id/rabbitmq/monitor',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Estado do broker do tenant e coletores conectados',
+          security: segurancaAdmin,
+          params: tenantParams,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.monitorarBrokerTenant.executar(request.params.id);
         return reply.status(200).send(dto);
       },
     );

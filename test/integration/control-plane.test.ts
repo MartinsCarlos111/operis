@@ -6,7 +6,7 @@ import {
 } from '@testcontainers/postgresql';
 import type { FastifyInstance } from 'fastify';
 import { PrismaClient } from '@prisma/client';
-import { buildApp } from '../../src/app.js';
+import { buildApp } from '../../src/server.js';
 import { ScryptHasherSenha } from '../../src/modules/operis_control/infrastructure/gateways/scrypt-hasher-senha.js';
 
 /**

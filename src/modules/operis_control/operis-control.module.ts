@@ -8,6 +8,8 @@ import { AutenticarSuperAdminUseCase } from './application/use-cases/autenticar-
 import { AutenticarTenantAdministradorUseCase } from './application/use-cases/autenticar-tenant-administrador.use-case.js';
 import { ConfigurarRabbitMqTenantUseCase } from './application/use-cases/configurar-rabbitmq-tenant.use-case.js';
 import { ObterRabbitMqTenantUseCase } from './application/use-cases/obter-rabbitmq-tenant.use-case.js';
+import { MonitorarBrokerTenantUseCase } from './application/use-cases/monitorar-broker-tenant.use-case.js';
+import { RabbitMqManagementMonitor } from './infrastructure/gateways/rabbitmq-management-monitor.js';
 import { ConfigurarSmtpTenantUseCase } from './application/use-cases/configurar-smtp-tenant.use-case.js';
 import { ObterSmtpTenantUseCase } from './application/use-cases/obter-smtp-tenant.use-case.js';
 import { PrismaTenantRepository } from './infrastructure/persistence/prisma-tenant.repository.js';
@@ -25,6 +27,11 @@ import { adminRoutes } from './infrastructure/http/admin.routes.js';
 export interface OperisControlOptions {
   /** Chave mestra AES-256-GCM (32 bytes base64) — vem exclusivamente do ambiente. */
   chaveMestraCriptografia: string;
+  /**
+   * Porta da Management API dos brokers (padrão 15672). É independente da porta
+   * AMQP guardada por tenant, que pode ter sido remapeada no deploy do broker.
+   */
+  portaManagementBroker?: number | undefined;
 }
 
 /**
@@ -47,6 +54,7 @@ export function construirModuloOperisControl(
   const hasher = new ScryptHasherSenha();
   const validadorConexao = new PrismaValidadorConexao();
   const provisionador = new PrismaProvisionadorSchema();
+  const monitorBroker = new RabbitMqManagementMonitor(opcoes.portaManagementBroker);
 
   // Resolver do Connection Manager: sabe traduzir tenantId → conexão (senha
   // decifrada). Exposto para o composition root montar o ConnectionManager.
@@ -80,6 +88,11 @@ export function construirModuloOperisControl(
         ids,
       ),
       obterRabbitMqTenant: new ObterRabbitMqTenantUseCase(rabbitmqConfigs),
+      monitorarBrokerTenant: new MonitorarBrokerTenantUseCase(
+        rabbitmqConfigs,
+        encryption,
+        monitorBroker,
+      ),
       configurarSmtpTenant: new ConfigurarSmtpTenantUseCase(smtpConfigs, tenants, encryption, ids),
       obterSmtpTenant: new ObterSmtpTenantUseCase(smtpConfigs),
     }),

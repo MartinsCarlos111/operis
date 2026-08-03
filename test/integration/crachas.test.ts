@@ -6,7 +6,7 @@ import {
 } from '@testcontainers/postgresql';
 import type { FastifyInstance } from 'fastify';
 import { PrismaClient } from '@prisma/client';
-import { buildApp } from '../../src/app.js';
+import { buildApp } from '../../src/server.js';
 import type { ConnectionManager } from '../../src/shared/tenant-runtime/index.js';
 import { AesGcmEncryptionService } from '../../src/modules/operis_control/infrastructure/gateways/aes-gcm-encryption.service.js';
 

@@ -45,3 +45,12 @@ export class ConexaoBancoFalhouError extends AppError {
     super(`Não foi possível conectar ao banco informado: ${motivo}`, options);
   }
 }
+
+export class BrokerInacessivelError extends AppError {
+  readonly code = 'BROKER_INACESSIVEL';
+  readonly httpStatus = 422;
+
+  constructor(motivo: string, options?: { cause?: unknown }) {
+    super(`Não foi possível consultar o broker de mensageria: ${motivo}`, options);
+  }
+}

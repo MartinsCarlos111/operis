@@ -1,4 +1,4 @@
-import { buildApp } from './app.js';
+import { buildApp } from './server.js';
 import { createPrismaClient } from '@shared/infra/prisma/prisma-client.js';
 
 /**
