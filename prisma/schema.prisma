@@ -4,7 +4,7 @@
 /// Este mesmo schema é replicado via migration nos bancos dedicados dos
 /// tenants registrados em TenantDatabase.
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-1.1.x"]
 }
 
@@ -52,6 +52,7 @@ model Estabelecimento {
   vinculos            UsuarioEstabelecimento[]
   areas               Area[]
   impressorasVinculos EstabelecimentoImpressora[]
+  dispositivosIot     DispositivoIot[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -143,6 +144,94 @@ model EstabelecimentoImpressora {
   @@map("estabelecimentos_impressoras")
 }
 
+/// Dispositivo coletor IoT (migrado de Octopus `IOT` + `CentroTrabalhoIOT`).
+/// O `serial` é a identidade do aparelho no chão de fábrica e é exatamente o
+/// client_id que ele apresenta ao broker MQTT — é por ele que o status online
+/// é resolvido em tempo real, sem persistir estado de conexão.
+model DispositivoIot {
+  idDispositivoIot String @id @default(uuid()) @db.Uuid
+
+  /// ex-serialIOT. Identidade do aparelho e client_id MQTT. Único no tenant.
+  serial         String  @unique
+  /// Rótulo operacional livre (o legado não tinha; a tela precisa).
+  nome           String
+  /// ex-model: família de hardware, entra na routing key `devices.<model>.<serial>`.
+  modelo         Int     @default(0)
+  /// ex-firmwareVersion, reportado pelo próprio dispositivo no REGISTER.
+  versaoFirmware String? @map("versao_firmware")
+  /// Último IP conhecido. Informativo — a fonte viva é o broker.
+  ip             String?
+
+  /// Vínculo com o centro de trabalho (ex-CentroTrabalhoIOT). Texto por ora:
+  /// o módulo de manufatura ainda não foi migrado.
+  centroTrabalho String? @map("centro_trabalho")
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  entradas EntradaIot[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([estabelecimentoId])
+  @@map("dispositivos_iot")
+}
+
+/// Entrada digital/analógica de um coletor (migrado de Octopus `ConfigIOT`).
+/// `param1..4` do legado viram campos nomeados por ausência de semântica no
+/// original — mantidos como opcionais para paridade de payload com o firmware.
+model EntradaIot {
+  idEntradaIot String @id @default(uuid()) @db.Uuid
+
+  dispositivoId String         @map("dispositivo_id") @db.Uuid
+  dispositivo   DispositivoIot @relation(fields: [dispositivoId], references: [idDispositivoIot], onDelete: Cascade)
+
+  /// ex-input: número da porta física no coletor (DI1 = 1, AI1 = 1, …).
+  input    Int
+  label    String
+  tipo     TipoEntradaIot
+  contexto ContextoIot
+  funcao   FuncaoIot
+
+  param1 Decimal? @db.Decimal(18, 4)
+  param2 Decimal? @db.Decimal(18, 4)
+  param3 Decimal? @db.Decimal(18, 4)
+  param4 Decimal? @db.Decimal(18, 4)
+
+  /// ex-analogAsDigital: lê uma porta analógica como se fosse digital.
+  analogicaComoDigital Boolean @default(false) @map("analogica_como_digital")
+  habilitado           Boolean @default(true)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Uma porta não pode ser configurada duas vezes no mesmo dispositivo.
+  @@unique([dispositivoId, input, tipo])
+  @@index([dispositivoId])
+  @@map("entradas_iot")
+}
+
+enum TipoEntradaIot {
+  DIGITAL
+  ANALOGICA
+}
+
+enum ContextoIot {
+  PRODUCAO
+  PARADA
+  QUALIDADE
+  MANUTENCAO
+}
+
+enum FuncaoIot {
+  CONTADOR
+  STATUS
+  SINAL
+  TEMPERATURA
+  PRESSAO
+}
+
 /// Crachá (migrado de Octopus `Cracha`). Identifica uma pessoa nos terminais.
 /// As 10 colunas fixas de digital do legado viram a tabela filha
 /// `CrachaBiometria` (1:N) — modelo correto: 0..10 digitais, com formato do SDK
@@ -198,10 +287,10 @@ model CrachaBiometria {
 /// um campo que pode ser referenciado num template de etiqueta, mapeando para o
 /// campo de origem em manufatura/coletores. Código único no tenant.
 model VariavelLayout {
-  idVariavel String @id @default(uuid()) @db.Uuid
+  idVariavel              String @id @default(uuid()) @db.Uuid
   /// Código de negócio (ex-cdVariavel). Único no tenant.
-  codigo     String @unique
-  descricao  String
+  codigo                  String @unique
+  descricao               String
   /// Campo de origem na etiqueta de manufatura (ex-campoEtiquetaManufatura).
   campoEtiquetaManufatura String @default("") @map("campo_etiqueta_manufatura")
   /// Campo de origem na etiqueta de coletores (ex-campoEtiquetaColetores).
@@ -464,8 +553,8 @@ model TenantRabbitMq {
   usuario     String
 
   /// iv + authTag + ciphertext serializados. Nunca em texto puro.
-  senhaEncrypted   String @map("senha_encrypted")
-  encryptionVersion Int   @default(1) @map("encryption_version")
+  senhaEncrypted    String @map("senha_encrypted")
+  encryptionVersion Int    @default(1) @map("encryption_version")
 
   sslEnabled Boolean @default(false) @map("ssl_enabled")
 
@@ -483,9 +572,9 @@ model TenantSmtp {
   tenantId String @unique @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [idTenant], onDelete: Cascade)
 
-  host    String
-  porta   Int
-  usuario String
+  host      String
+  porta     Int
+  usuario   String
   /// Remetente padrão (From) das mensagens enviadas por este tenant.
   remetente String @default("")
 

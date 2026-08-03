@@ -60,7 +60,26 @@ export function construirModuloOperisControl(
   // decifrada). Exposto para o composition root montar o ConnectionManager.
   const tenantResolver = new TenantResolverControlPlane(tenants, encryption);
 
+  /**
+   * Traduz tenantId → acesso à Management API do broker (senha decifrada em
+   * memória). Exposto para o composition root injetar no módulo iot, que
+   * precisa do broker mas não pode importar o Control Plane.
+   */
+  const resolverAcessoBroker = async (tenantId: string) => {
+    const config = await rabbitmqConfigs.buscarPorTenant(tenantId);
+    if (!config) return null;
+    return {
+      host: config.host,
+      portaManagement: opcoes.portaManagementBroker ?? 15672,
+      usuario: config.usuario,
+      senha: encryption.decifrar(config.senhaCifrada),
+      virtualHost: config.virtualHost,
+      sslHabilitado: config.sslHabilitado,
+    };
+  };
+
   return {
+    resolverAcessoBroker,
     tenantResolver,
     routes: adminRoutes({
       autenticarSuperAdminUseCase: new AutenticarSuperAdminUseCase(superAdmins, hasher),
