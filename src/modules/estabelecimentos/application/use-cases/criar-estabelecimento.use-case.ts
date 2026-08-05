@@ -1,10 +1,11 @@
 import { Estabelecimento } from '../../domain/entities/estabelecimento.js';
-import type { EstabelecimentoRepository } from '../../domain/repositories/estabelecimento.repository.js';
+import type { CriadorEstabelecimentoComAcesso } from '../../domain/gateways/criador-estabelecimento-com-acesso.js';
 import type { GeradorId } from '@shared/domain/gerador-id.js';
 import type { StatusRecurso } from '@shared/domain/status-recurso.js';
 import { paraEstabelecimentoDTO, type EstabelecimentoDTO } from '../dtos/estabelecimento.dto.js';
 
 export interface CriarEstabelecimentoInput {
+  usuarioId: string;
   descricao: string;
   recursos?:
     | {
@@ -18,7 +19,7 @@ export interface CriarEstabelecimentoInput {
 
 export class CriarEstabelecimentoUseCase {
   constructor(
-    private readonly estabelecimentos: EstabelecimentoRepository,
+    private readonly criadorComAcesso: CriadorEstabelecimentoComAcesso,
     private readonly ids: GeradorId,
   ) {}
 
@@ -29,7 +30,7 @@ export class CriarEstabelecimentoUseCase {
       recursos: input.recursos,
     });
 
-    await this.estabelecimentos.salvar(estabelecimento);
+    await this.criadorComAcesso.criar(estabelecimento, input.usuarioId);
     return paraEstabelecimentoDTO(estabelecimento);
   }
 }

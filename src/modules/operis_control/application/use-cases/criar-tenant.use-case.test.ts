@@ -10,6 +10,10 @@ import type { EncryptionService, SegredoCifrado } from '../../domain/gateways/en
 import type { HasherSenha } from '../../domain/gateways/hasher-senha.js';
 import type { DadosConexaoBanco, ValidadorConexaoBanco } from '../../domain/gateways/validador-conexao-banco.js';
 import type { ProvisionadorSchemaTenant } from '../../domain/gateways/provisionador-schema-tenant.js';
+import type {
+  AdministradorInicialTenant,
+  InicializadorDadosTenant,
+} from '../../domain/gateways/inicializador-dados-tenant.js';
 import type { GeradorId } from '@shared/domain/gerador-id.js';
 import { SlugJaExisteError, ConexaoBancoFalhouError } from '../../domain/exceptions/index.js';
 
@@ -92,6 +96,14 @@ class ProvisionadorStub implements ProvisionadorSchemaTenant {
   }
 }
 
+class InicializadorDadosTenantStub implements InicializadorDadosTenant {
+  inicializacoes: { banco: string; administrador: AdministradorInicialTenant }[] = [];
+
+  async inicializar(dados: DadosConexaoBanco, administrador: AdministradorInicialTenant): Promise<void> {
+    this.inicializacoes.push({ banco: dados.nomeBanco, administrador });
+  }
+}
+
 class GeradorIdSequencial implements GeradorId {
   private n = 0;
   gerar(): string {
@@ -121,6 +133,7 @@ describe('CriarTenantUseCase', () => {
   let administradores: AdministradorRepositoryEmMemoria;
   let validador: ValidadorConexaoStub;
   let provisionador: ProvisionadorStub;
+  let inicializador: InicializadorDadosTenantStub;
   let useCase: CriarTenantUseCase;
 
   beforeEach(() => {
@@ -128,6 +141,7 @@ describe('CriarTenantUseCase', () => {
     administradores = new AdministradorRepositoryEmMemoria();
     validador = new ValidadorConexaoStub();
     provisionador = new ProvisionadorStub();
+    inicializador = new InicializadorDadosTenantStub();
     useCase = new CriarTenantUseCase(
       tenants,
       administradores,
@@ -135,6 +149,7 @@ describe('CriarTenantUseCase', () => {
       new HasherFake(),
       validador,
       provisionador,
+      inicializador,
       new GeradorIdSequencial(),
     );
   });
@@ -156,6 +171,16 @@ describe('CriarTenantUseCase', () => {
     // Conexão validada ANTES de persistir; schema aplicado no banco do tenant.
     expect(validador.chamadas).toHaveLength(1);
     expect(provisionador.provisionados).toEqual(['operis_acme']);
+    expect(inicializador.inicializacoes).toEqual([
+      {
+        banco: 'operis_acme',
+        administrador: {
+          idUsuario: resultado.administrador.idTenantAdministrador,
+          nome: 'Alice Admin',
+          email: 'alice@acme.com',
+        },
+      },
+    ]);
 
     // A senha do banco não existe em texto puro no agregado persistido.
     const salvo = await tenants.buscarPorId(resultado.tenant.idTenant);
@@ -187,5 +212,6 @@ describe('CriarTenantUseCase', () => {
     expect(tenants.itens.size).toBe(0);
     expect(administradores.itens.size).toBe(0);
     expect(provisionador.provisionados).toHaveLength(0);
+    expect(inicializador.inicializacoes).toHaveLength(0);
   });
 });

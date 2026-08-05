@@ -6,12 +6,16 @@ import { EditarDispositivoIotUseCase } from './application/use-cases/editar-disp
 import { ExcluirDispositivoIotUseCase } from './application/use-cases/excluir-dispositivo-iot.use-case.js';
 import { BuscarDispositivoIotUseCase } from './application/use-cases/buscar-dispositivo-iot.use-case.js';
 import { ListarDispositivosIotUseCase } from './application/use-cases/listar-dispositivos-iot.use-case.js';
+import { ConsultarContadoresIotUseCase } from './application/use-cases/consultar-contadores-iot.use-case.js';
+import { MonitorarBrokerIotUseCase } from './application/use-cases/monitorar-broker-iot.use-case.js';
 import { PrismaDispositivoIotRepository } from './infrastructure/persistence/prisma-dispositivo-iot.repository.js';
+import { PrismaLeituraIotRepository } from './infrastructure/persistence/prisma-leitura-iot.repository.js';
 import { PrismaVerificadorEstabelecimento } from './infrastructure/gateways/prisma-verificador-estabelecimento.js';
 import {
   RabbitMqConsultorConexoes,
   type ResolvedorAcessoBroker,
 } from './infrastructure/gateways/rabbitmq-consultor-conexoes.js';
+import { RabbitMqMonitorBrokerIot } from './infrastructure/gateways/rabbitmq-monitor-broker-iot.js';
 import {
   dispositivoIotRoutes,
   type DispositivoIotUseCases,
@@ -39,11 +43,14 @@ export function construirModuloIot(
   resolverAcessoBroker: ResolvedorAcessoBroker,
 ) {
   const broker = new RabbitMqConsultorConexoes(resolverAcessoBroker);
+  const monitorBroker = new RabbitMqMonitorBrokerIot(resolverAcessoBroker);
 
   const montarUseCases = (prisma: PrismaClient): DispositivoIotUseCases => {
     const dispositivos = new PrismaDispositivoIotRepository(prisma);
+    const leituras = new PrismaLeituraIotRepository(prisma);
     const estabelecimentos = new PrismaVerificadorEstabelecimento(prisma);
     return {
+      consultarContadores: new ConsultarContadoresIotUseCase(dispositivos, leituras),
       criarDispositivo: new CriarDispositivoIotUseCase(dispositivos, estabelecimentos, ids),
       editarDispositivo: new EditarDispositivoIotUseCase(dispositivos, broker, ids),
       excluirDispositivo: new ExcluirDispositivoIotUseCase(dispositivos),
@@ -53,6 +60,10 @@ export function construirModuloIot(
   };
 
   return {
-    routes: dispositivoIotRoutes({ montarUseCases, ...cadeia }),
+    routes: dispositivoIotRoutes({
+      montarUseCases,
+      monitorarBroker: new MonitorarBrokerIotUseCase(monitorBroker),
+      ...cadeia,
+    }),
   };
 }

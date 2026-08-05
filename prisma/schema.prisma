@@ -54,6 +54,19 @@ model Estabelecimento {
   impressorasVinculos EstabelecimentoImpressora[]
   dispositivosIot     DispositivoIot[]
 
+  // Área Manufatura (só faz sentido quando `manufatura` está ATIVO).
+  calendarios     Calendario[]
+  gruposMaquina   GrupoMaquina[]
+  tiposCausa      TipoCausa[]
+  tiposParada     TipoParada[]
+  tiposRecusa     TipoRecusa[]
+  tiposRefugo     TipoRefugo[]
+  centrosTrabalho CentroTrabalho[]
+  artigos         Artigo[]
+  configuracoesCampos ConfiguracaoCampo[]
+  planosProducao  PlanoProducao[]
+  ordensProducao  OrdemProducao[]
+
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
@@ -170,6 +183,7 @@ model DispositivoIot {
   estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
 
   entradas EntradaIot[]
+  leituras LeituraIot[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -210,6 +224,37 @@ model EntradaIot {
   @@unique([dispositivoId, input, tipo])
   @@index([dispositivoId])
   @@map("entradas_iot")
+}
+
+/// Leitura enviada por um coletor (migrado de Octopus `IndicadoresIOT` +
+/// `MovimentIOT`). É a série temporal bruta: cada pulso/medição vira uma linha,
+/// e os contadores da tela são agregações sobre ela.
+///
+/// `ocorridoEm` é o instante no dispositivo; `registradoEm` é quando o worker
+/// gravou — a diferença revela atraso de rede ou buffer do coletor.
+model LeituraIot {
+  idLeituraIot String @id @default(uuid()) @db.Uuid
+
+  dispositivoId String         @map("dispositivo_id") @db.Uuid
+  dispositivo   DispositivoIot @relation(fields: [dispositivoId], references: [idDispositivoIot], onDelete: Cascade)
+
+  /// Porta física de origem, casada com EntradaIot.input.
+  input    Int
+  contexto ContextoIot
+  /// Decimal (não int) porque entradas analógicas trazem medições fracionárias.
+  valor    Decimal     @db.Decimal(18, 4)
+
+  ocorridoEm   DateTime @map("ocorrido_em")
+  registradoEm DateTime @default(now()) @map("registrado_em")
+
+  /// Chave de deduplicação: o MQTT garante "ao menos uma entrega", então a
+  /// mesma leitura pode chegar duas vezes numa reconexão.
+  chaveEvento String @unique @map("chave_evento")
+
+  // Consultas são sempre "leituras deste dispositivo neste intervalo".
+  @@index([dispositivoId, ocorridoEm])
+  @@index([dispositivoId, input, ocorridoEm])
+  @@map("leituras_iot")
 }
 
 enum TipoEntradaIot {
@@ -389,6 +434,22 @@ model Permissao {
   @@map("permissoes")
 }
 
+model ConfiguracaoCampo {
+  idConfiguracaoCampo String          @id @default(uuid()) @db.Uuid
+  estabelecimentoId   String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento     Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  tela                String
+  campo               String
+  visivel             Boolean         @default(true)
+  ordem               Int             @default(0)
+  criadoEm            DateTime        @default(now()) @map("criado_em")
+  atualizadoEm        DateTime        @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, tela, campo])
+  @@index([estabelecimentoId, tela])
+  @@map("configuracoes_campos")
+}
+
 /// Nível de acesso (perfil), escopado por estabelecimento — multi-tenant.
 /// Cada nível seleciona um subconjunto de permissões do catálogo.
 model NivelAcesso {
@@ -427,6 +488,8 @@ model NivelAcessoPermissao {
 }
 
 model Usuario {
+  movimentosRegistrados Movimento[] @relation("MovimentosRegistrados")
+  movimentosCancelados  Movimento[] @relation("MovimentosCancelados")
   idUsuario String  @id @default(uuid()) @db.Uuid
   nome      String
   email     String  @unique
@@ -626,4 +689,682 @@ model SuperAdmin {
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   @@map("super_admins")
+}
+
+// ============================================================================
+// ÁREA MANUFATURA
+// ----------------------------------------------------------------------------
+// Migrada de Octopus.Modelo/Manufatura (banco físico MANUFATURA do legado).
+// Aqui convive no mesmo Postgres do tenant — o isolamento do operis é por
+// tenant, não por produto (ver docs/migracao-octopus.md).
+//
+// Convenções herdadas do domínio Principal: PK UUID, "codigo" como
+// identificador natural de negócio único por estabelecimento, e as colunas
+// coringa AuxiliaresManufatura (intAux1..10 etc.) DESCARTADAS — não têm uso de
+// negócio; extras futuros entram como colunas nomeadas.
+// ============================================================================
+
+/// ex-EnumTratamentoTempo. Como o tempo padrão da operação é aplicado.
+enum TratamentoTempo {
+  FIXO
+  PROPORCIONAL
+  FERRAMENTAL
+  LOTE
+}
+
+/// ex-EnumTipoUnidadeMedida.
+enum TipoUnidadeMedida {
+  UNIDADE
+  METRAGEM
+  PESO
+  AREA
+  VOLUME
+  ESPECIFICA
+}
+
+/// ex-EnumCriticidadeParada. Compartilhada por TipoParada/Causa/Recusa/Refugo —
+/// no legado era uma string "Criticidade" solta em cada uma delas.
+enum CriticidadeParada {
+  PLANEJADA
+  BAIXA
+  NORMAL
+  ALTA
+  CRITICA
+  IMPEDITIVA
+}
+
+/// ex-EnumRegraDespacho (GrupoMaquina.RegraDespacho, string no legado).
+enum RegraDespacho {
+  MENOR_OPERACAO
+  DATA_ENTREGA
+  PRIORIDADE
+  CODIGO_REDUTOR
+}
+
+enum StatusOrdemProducao {
+  LIBERADA
+  NAO_LIBERADA
+  INICIADA
+  CONGELADA
+  RECUSADA
+  CONCLUIDA
+  CANCELADA
+  BAIXADA
+}
+
+enum OrigemOrdemProducao {
+  OCTOPUS
+  ERP
+  TERMINAL
+  PLANO
+}
+
+enum ModoDistribuicaoOrdem {
+  PUXADA
+  EMPURRADA
+}
+
+/// ex-EnumTipoCausa.
+enum TipoCausaClassificacao {
+  MANUTENCAO
+  PARADA
+}
+
+/// ex-EnumTipoParada.
+enum TipoParadaClassificacao {
+  CONTROLA_MANUTENCAO
+  INFORMA_CAUSA
+}
+
+/// ex-EnumOrigem (TipoRecusa.Origem, string no legado).
+enum OrigemRecusa {
+  PRODUCAO
+  MANUTENCAO
+  QUALIDADE
+  IMPRESSAO
+}
+
+/// Calendário de produção (migrado de Octopus `Calendario`). Define a jornada
+/// que o Centro de Trabalho usa para calcular disponibilidade. Pertence a um
+/// estabelecimento — o CentroTrabalhoRN valida que ele existe, que o
+/// estabelecimento está ativo e que tem o produto Manufatura habilitado.
+model Calendario {
+  idCalendario String        @id @default(uuid()) @db.Uuid
+  codigo       String
+  descricao    String
+  status       StatusRecurso @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho CentroTrabalho[]
+  turnos          Turno[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("calendarios")
+}
+
+/// Grupo de máquina (migrado de Octopus `GrupoMaquina`). Agrupa centros de
+/// trabalho equivalentes e carrega a regra de despacho do sequenciamento.
+model GrupoMaquina {
+  idGrupoMaquina String        @id @default(uuid()) @db.Uuid
+  codigo         String
+  descricao      String
+  status         StatusRecurso @default(ATIVO)
+  regraDespacho  RegraDespacho @default(DATA_ENTREGA) @map("regra_despacho")
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho CentroTrabalho[]
+  planosProducao PlanoProducao[]
+  ordensProducao OrdemProducao[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("grupos_maquina")
+}
+
+/// Tipo de causa de parada (migrado de Octopus `TipoCausa`).
+model TipoCausa {
+  movimentos Movimento[]
+  idTipoCausa        String                  @id @default(uuid()) @db.Uuid
+  codigo             String
+  descricao          String
+  /// ex-DsDetalhada: orientação longa ao operador.
+  descricaoDetalhada String?                 @map("descricao_detalhada")
+  criticidade        CriticidadeParada       @default(NORMAL)
+  classificacao      TipoCausaClassificacao?
+  status             StatusRecurso           @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho CentroTrabalho[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("tipos_causa")
+}
+
+/// Tipo de parada (migrado de Octopus `TipoParada`). `consideraOee` decide se
+/// a parada entra no cálculo de disponibilidade do OEE.
+model TipoParada {
+  movimentos Movimento[]
+  idTipoParada        String                   @id @default(uuid()) @db.Uuid
+  codigo              String
+  descricao           String
+  consideraOee        Boolean                  @default(true) @map("considera_oee")
+  classificacao       TipoParadaClassificacao?
+  /// ex-ParadaPadrao (TimeSpan) → minutos inteiros, unidade explícita.
+  paradaPadraoMinutos Int?                     @map("parada_padrao_minutos")
+  utilizaParadaPadrao Boolean                  @default(false) @map("utiliza_parada_padrao")
+  criticidade         CriticidadeParada        @default(NORMAL)
+  status              StatusRecurso            @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho CentroTrabalho[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("tipos_parada")
+}
+
+/// Tipo de recusa (migrado de Octopus `TipoRecusa`).
+model TipoRecusa {
+  movimentos Movimento[]
+  idTipoRecusa String            @id @default(uuid()) @db.Uuid
+  codigo       String
+  descricao    String
+  origem       OrigemRecusa      @default(PRODUCAO)
+  criticidade  CriticidadeParada @default(NORMAL)
+  status       StatusRecurso     @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho CentroTrabalho[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("tipos_recusa")
+}
+
+/// Tipo de refugo (migrado de Octopus `TipoRefugo`). `consideraOee` decide se
+/// o refugo entra no índice de qualidade.
+model TipoRefugo {
+  movimentos Movimento[]
+  idTipoRefugo       String            @id @default(uuid()) @db.Uuid
+  codigo             String
+  descricao          String
+  consideraOee       Boolean           @default(true) @map("considera_oee")
+  possivelRetrabalho Boolean           @default(false) @map("possivel_retrabalho")
+  criticidade        CriticidadeParada @default(NORMAL)
+  status             StatusRecurso     @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho CentroTrabalho[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("tipos_refugo")
+}
+
+/// Centro de Trabalho (migrado de Octopus `CentroTrabalho`) — o recurso
+/// produtivo onde as operações são apontadas.
+///
+/// Campos portados = os que o ConfigCampos do legado expõe na tela
+/// (cdCentroTrabalho, dsCentroTrabalho, ativo, controlaMaoObra, preparacao,
+/// operacaoBaixada, tempoParadaPadrao, tipoUnidadeMedida, tratamentoTempo,
+/// tratamentoTempoLote e as quatro metas de turno) + custoMaquinaHora, que o
+/// CentroTrabalhoRN valida explicitamente.
+///
+/// DESCARTADOS por não terem uso vivo no cadastro (nenhum aparece no
+/// ConfigCampos da tela): colunas AuxiliaresManufatura, campos de integração
+/// legada (CdFabrica, CdERP, IdMaquinaBancoIntegracao, TimerIntegracao,
+/// OrdemOctopus, AdicionaisApontamento, TipoMovimentoApontamento) e as metas de
+/// produção hora/dia/mês.
+///
+/// A FK opcional para Equipamento ficou fora desta migração: o
+/// EquipamentoManufatura legado tem ~50 campos, 12 FKs de botão apontando de
+/// volta para CentroTrabalho e depende de Terminais, que ainda não existe.
+model CentroTrabalho {
+  movimentos Movimento[]
+  idCentroTrabalho String        @id @default(uuid()) @db.Uuid
+  codigo           String
+  descricao        String
+  status           StatusRecurso @default(ATIVO)
+
+  /// Obrigatório — CentroTrabalhoRN.ValidarCentroTrabalho: "Informe um calendário."
+  calendarioId String     @map("calendario_id") @db.Uuid
+  calendario   Calendario @relation(fields: [calendarioId], references: [idCalendario])
+
+  /// Opcionais: validados só quando informados (paridade com o RN).
+  grupoMaquinaId String?       @map("grupo_maquina_id") @db.Uuid
+  grupoMaquina   GrupoMaquina? @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
+  tipoCausaId    String?       @map("tipo_causa_id") @db.Uuid
+  tipoCausa      TipoCausa?    @relation(fields: [tipoCausaId], references: [idTipoCausa])
+  tipoParadaId   String?       @map("tipo_parada_id") @db.Uuid
+  tipoParada     TipoParada?   @relation(fields: [tipoParadaId], references: [idTipoParada])
+  tipoRecusaId   String?       @map("tipo_recusa_id") @db.Uuid
+  tipoRecusa     TipoRecusa?   @relation(fields: [tipoRecusaId], references: [idTipoRecusa])
+  tipoRefugoId   String?       @map("tipo_refugo_id") @db.Uuid
+  tipoRefugo     TipoRefugo?   @relation(fields: [tipoRefugoId], references: [idTipoRefugo])
+
+  controlaMaoObra Boolean @default(false) @map("controla_mao_obra")
+  preparacao      Boolean @default(false)
+  /// ex-OperacaoBaixada: nº da operação baixada automaticamente.
+  operacaoBaixada Int?    @map("operacao_baixada")
+
+  /// ex-TempoParadaPadrao (TimeSpan) → minutos inteiros, unidade explícita.
+  tempoParadaPadraoMinutos Int               @default(0) @map("tempo_parada_padrao_minutos")
+  tratamentoTempo          TratamentoTempo   @default(FIXO) @map("tratamento_tempo")
+  /// Tamanho do lote quando tratamentoTempo = LOTE.
+  tratamentoTempoLote      Decimal?          @map("tratamento_tempo_lote") @db.Decimal(18, 4)
+  tipoUnidadeMedida        TipoUnidadeMedida @default(UNIDADE) @map("tipo_unidade_medida")
+
+  /// Metas de turno (%).
+  metaDispTurno   Decimal? @map("meta_disp_turno") @db.Decimal(5, 2)
+  metaDesempTurno Decimal? @map("meta_desemp_turno") @db.Decimal(5, 2)
+  metaQualiTurno  Decimal? @map("meta_quali_turno") @db.Decimal(5, 2)
+  metaOeeTurno    Decimal? @map("meta_oee_turno") @db.Decimal(5, 2)
+  /// CentroTrabalhoRN recusa valor negativo.
+  custoMaquinaHora Decimal @default(0) @map("custo_maquina_hora") @db.Decimal(18, 4)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  artigosCentros    ArtigoCentroTrabalho[]
+  planosProducao    PlanoProducao[]
+  ordensProducao    OrdemProducao[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@index([calendarioId])
+  @@index([grupoMaquinaId])
+  @@map("centros_trabalho")
+}
+
+/// Artigo/item de manufatura. O cadastro e global somente dentro do tenant;
+/// o relacionamento produtivo e definido por CentroTrabalho.
+model Artigo {
+  idArtigo String @id @default(uuid()) @map("id_artigo") @db.Uuid
+  codigo String
+  descricao String
+  qualidades String?
+  status StatusRecurso @default(ATIVO)
+  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
+  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  centrosTrabalho ArtigoCentroTrabalho[]
+  criadoEm DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId, status])
+  @@map("artigos")
+}
+
+/// Parametros do artigo em um centro de trabalho (legado CentroTrabalhoItem).
+model ArtigoCentroTrabalho {
+  idArtigoCentroTrabalho String @id @default(uuid()) @map("id_artigo_centro_trabalho") @db.Uuid
+  artigoId String @map("artigo_id") @db.Uuid
+  centroTrabalhoId String @map("centro_trabalho_id") @db.Uuid
+  cicloProdutivoHora Float @default(0) @map("ciclo_produtivo_hora")
+  cicloProdutivoPecaSegundos Float @default(0) @map("ciclo_produtivo_peca_segundos")
+  tempoPreparacaoSegundos Float @default(0) @map("tempo_preparacao_segundos")
+  fatorRefugo Float @default(0) @map("fator_refugo")
+  quantidadeRefugo Float @default(0) @map("quantidade_refugo")
+  quantidadePerda Float @default(0) @map("quantidade_perda")
+  apontarPreparacao Float @default(0) @map("apontar_preparacao")
+  tempoMaquinaSegundos Float @default(0) @map("tempo_maquina_segundos")
+  loteMultiplo Float @default(0) @map("lote_multiplo")
+  ativo Boolean @default(true)
+  artigo Artigo @relation(fields: [artigoId], references: [idArtigo], onDelete: Cascade)
+  centroTrabalho CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+  criadoEm DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+  @@unique([artigoId, centroTrabalhoId])
+  @@index([centroTrabalhoId, ativo])
+  @@map("artigos_centros_trabalho")
+}
+
+/// Plano de producao usado para gerar ordens previamente planejadas.
+model PlanoProducao {
+  idPlanoProducao String @id @default(uuid()) @db.Uuid
+  codigo         String
+  descricao      String
+  itemCodigo     String
+  itemDescricao  String?
+  quantidade     Float
+  unidadeMedida  TipoUnidadeMedida @default(UNIDADE) @map("unidade_medida")
+  inicioPlanejado DateTime? @map("inicio_planejado")
+  fimPlanejado    DateTime? @map("fim_planejado")
+  status          StatusRecurso @default(ATIVO)
+
+  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  centroTrabalhoId  String? @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho    CentroTrabalho? @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho])
+  grupoMaquinaId    String? @map("grupo_maquina_id") @db.Uuid
+  grupoMaquina      GrupoMaquina? @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
+  ordensProducao    OrdemProducao[]
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId, status])
+  @@map("planos_producao")
+}
+
+/// Ordem de producao. A combinacao codigo + identificador preserva a
+/// identidade externa do legado e permanece unica dentro do tenant.
+model OrdemProducao {
+  movimentos Movimento[]
+  idOrdemProducao String @id @default(uuid()) @map("id_ordem_producao") @db.Uuid
+  codigo         String
+  identificador String
+  itemCodigo     String @map("item_codigo")
+  itemDescricao  String? @map("item_descricao")
+  quantidadePlanejada Float @map("quantidade_planejada")
+  quantidadeProduzida Float @default(0) @map("quantidade_produzida")
+  quantidadeRefugo Float @default(0) @map("quantidade_refugo")
+  unidadeMedida TipoUnidadeMedida @default(UNIDADE) @map("unidade_medida")
+  status StatusOrdemProducao @default(LIBERADA)
+  origem OrigemOrdemProducao @default(OCTOPUS)
+  modoDistribuicao ModoDistribuicaoOrdem @default(PUXADA) @map("modo_distribuicao")
+  prioridade Int @default(999999)
+  prioridadeCodigoRedutor Int @default(999999) @map("prioridade_codigo_redutor")
+  sequencia Int @default(999999)
+  centroTrabalhoValido String? @map("centro_trabalho_valido")
+  cliente String?
+  pedido String?
+  observacoes String?
+  criadaEm DateTime @default(now()) @map("criada_em")
+  liberacaoEm DateTime? @map("liberacao_em")
+  inicioPlanejado DateTime? @map("inicio_planejado")
+  fimPlanejado DateTime? @map("fim_planejado")
+  encerraEm DateTime? @map("encerra_em")
+
+  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
+  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  centroTrabalhoId String? @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho CentroTrabalho? @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho])
+  grupoMaquinaId String? @map("grupo_maquina_id") @db.Uuid
+  grupoMaquina GrupoMaquina? @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
+  planoProducaoId String? @map("plano_producao_id") @db.Uuid
+  planoProducao PlanoProducao? @relation(fields: [planoProducaoId], references: [idPlanoProducao])
+  ordemPaiId String? @map("ordem_pai_id") @db.Uuid
+  ordemPai OrdemProducao? @relation("OrdemPai", fields: [ordemPaiId], references: [idOrdemProducao])
+  ordensFilhas OrdemProducao[] @relation("OrdemPai")
+  ordemSequenciaId String? @map("ordem_sequencia_id") @db.Uuid
+  ordemSequencia OrdemProducao? @relation("OrdemSequencia", fields: [ordemSequenciaId], references: [idOrdemProducao])
+  ordensSequenciadas OrdemProducao[] @relation("OrdemSequencia")
+  reservas           Reserva[]
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([codigo, identificador])
+  @@index([estabelecimentoId, status])
+  @@index([estabelecimentoId, inicioPlanejado])
+  @@map("ordens_producao")
+}
+
+/// Dia da semana em que um turno é praticado. No legado era a string
+/// `Turno.DiaDaSemana` (lista serializada); aqui é um array de enum.
+enum DiaSemana {
+  DOMINGO
+  SEGUNDA
+  TERCA
+  QUARTA
+  QUINTA
+  SEXTA
+  SABADO
+}
+
+/// Turno de produção (migrado de Octopus `Turno`). Pertence a um Calendário e
+/// é o recorte de tempo sobre o qual o OEE é calculado — todo Movimento
+/// referencia obrigatoriamente um turno (`MovimentosRN.ValidarMovimento`:
+/// "Informe um turno válido.").
+///
+/// DIVERGÊNCIA DELIBERADA vs legado: lá `DtHrInicioTurno`/`DtHrFimTurno` são
+/// `DateTime` cuja parte de DATA é descartada — `TurnoRN` e
+/// `CalculoIndicadoresRN` reparseiam apenas o `HH:mm:ss` sobre o dia alvo.
+/// Guardar isso como DateTime convidava ao erro de comparar datas que não
+/// significam nada. Aqui são minutos desde a meia-noite (0..1439), o que também
+/// torna o turno que cruza a meia-noite representável sem ambiguidade — o
+/// legado tinha uma incoerência aí: `ValidarTurno` recusava início > fim,
+/// enquanto o runtime somava 1 dia ao fim justamente para suportar esse caso.
+/// Mantivemos o comportamento do RUNTIME (o que a fábrica de fato usa).
+model Turno {
+  movimentos Movimento[]
+  idTurno   String @id @default(uuid()) @db.Uuid
+  codigo    String
+  descricao String
+
+  calendarioId String     @map("calendario_id") @db.Uuid
+  calendario   Calendario @relation(fields: [calendarioId], references: [idCalendario], onDelete: Cascade)
+
+  /// Minutos desde a meia-noite (0..1439). início >= fim ⇒ turno vira o dia.
+  inicioMinutos Int @map("inicio_minutos")
+  fimMinutos    Int @map("fim_minutos")
+
+  /// ex-TempoTotal / TempoDisponivel (TimeSpan) → minutos, unidade explícita.
+  /// Invariantes do TurnoRN: nenhum pode ser zero e disponível <= total.
+  tempoTotalMinutos     Int @map("tempo_total_minutos")
+  tempoDisponivelMinutos Int @map("tempo_disponivel_minutos")
+
+  /// Não pode ser vazio ("Selecione ao menos um dia da semana.").
+  diasSemana DiaSemana[] @map("dias_semana")
+
+  /// ex-Util: turno em dia útil (vs. fim de semana/feriado).
+  util       Boolean       @default(true)
+  observacao String?
+  status     StatusRecurso @default(ATIVO)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([calendarioId, codigo])
+  @@index([calendarioId])
+  @@map("turnos")
+}
+
+/// ex-EnumStatusReserva. No legado eram inteiros (0/1/2); aqui, nomes.
+enum StatusReserva {
+  NAO_REQUISITADA
+  REQUISITADA
+  CANCELADA
+}
+
+/// Reserva de material de uma Ordem de Produção (migrada de Octopus `Reserva`).
+/// É o insumo que o terminal requisita e devolve — os movimentos de
+/// `Requisicao`/`Devolucao` apontam para ela (`MovimentosRN.ValidarMovimento`:
+/// "Movimentos do tipo 'X' precisam de uma Reserva associada.").
+///
+/// A identidade natural do legado é (ordem + item + sequência): é por essa
+/// tripla que `BuscarIdReserva` resolve a reserva vinda do terminal.
+///
+/// DESCARTADOS: colunas `AuxiliaresManufatura` (sem uso de negócio) e
+/// `CdItemPrimario`/`CdReferencia`, que no legado só transitam na integração ERP
+/// e não têm consumidor no cadastro — entram como colunas nomeadas quando a
+/// integração for migrada.
+model Reserva {
+  movimentos Movimento[]
+  idReserva String @id @default(uuid()) @db.Uuid
+
+  ordemProducaoId String        @map("ordem_producao_id") @db.Uuid
+  ordemProducao   OrdemProducao @relation(fields: [ordemProducaoId], references: [idOrdemProducao], onDelete: Cascade)
+
+  /// >= 1 (ReservaRN: "A sequência da reserva não pode ser menor do que '1'").
+  sequencia Int
+  itemCodigo    String  @map("item_codigo")
+  itemDescricao String  @map("item_descricao")
+  lote          String?
+  unidadeMedida String? @map("unidade_medida")
+
+  /// Todas >= 0 (ReservaRN valida as três separadamente).
+  quantidadeReserva    Decimal @default(0) @map("quantidade_reserva") @db.Decimal(18, 4)
+  quantidadeRequisitada Decimal @default(0) @map("quantidade_requisitada") @db.Decimal(18, 4)
+  quantidadeDevolvida  Decimal @default(0) @map("quantidade_devolvida") @db.Decimal(18, 4)
+
+  /// ex-RequisicaoTerminal: a requisição partiu do chão de fábrica.
+  requisicaoTerminal Boolean @default(false) @map("requisicao_terminal")
+
+  /// Derivado de `quantidadeRequisitada`, exceto quando CANCELADA — que é
+  /// terminal e não volta atrás (regra do ReservaRN.ValidarReserva).
+  status StatusReserva @default(NAO_REQUISITADA)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([ordemProducaoId, itemCodigo, sequencia])
+  @@index([ordemProducaoId])
+  @@map("reservas")
+}
+
+/// ex-EnumTipoMovimento. O legado tinha `UNKNOWN = 0` como sentinela de
+/// desserialização; aqui um valor inválido é recusado pelo schema, então ele
+/// não tem razão de existir.
+enum TipoMovimento {
+  PREPARACAO
+  REPORTE
+  REFUGO
+  PARADA
+  TROCA_FERRAMENTAL
+  TROCA_TURNO
+  RECUSA
+  ALERTA
+  HISTORICO
+  ESTORNO
+  REQUISICAO
+  DEVOLUCAO
+  CONSUMO_LOTE
+}
+
+/// Movimento de chão de fábrica (migrado de Octopus `Movimento`) — o registro
+/// atômico de tudo que acontece num Centro de Trabalho: reporte de produção,
+/// parada, refugo, requisição de material, troca de turno.
+///
+/// É a fonte do cálculo de OEE/TEEP: `MontarPreCalculosOEE` percorre movimentos.
+///
+/// As seis colunas de quantidade vêm do legado e são intencionais: o Centro de
+/// Trabalho define em qual unidade ele reporta (`tipoUnidadeMedida`), e
+/// `MovimentoFactory.GetQuantidadeMovimento` lê a coluna correspondente. É essa
+/// leitura que a regra do estorno automático usa.
+///
+/// DESCARTADOS (sem consumidor nas regras portadas): colunas
+/// `AuxiliaresManufatura`; as dimensões Comprimento/Largura/Espessura/
+/// DiametroInterno/DiametroExterno (específicas de produto dimensional); e a FK
+/// para `Erro`, cujo módulo ainda não foi migrado.
+///
+/// PENDENTES por dependência inexistente: `Ferramenta` (exigida pelo tipo
+/// TROCA_FERRAMENTAL) e `QualidadeItem`.
+model Movimento {
+  idMovimento String        @id @default(uuid()) @db.Uuid
+  tipo        TipoMovimento
+
+  centroTrabalhoId String         @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho   CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+
+  /// Obrigatório para todos os tipos exceto PARADA/ALERTA/RECUSA/
+  /// TROCA_FERRAMENTAL/TROCA_TURNO (regra do MovimentosRN.ValidarMovimento).
+  ordemProducaoId String?        @map("ordem_producao_id") @db.Uuid
+  ordemProducao   OrdemProducao? @relation(fields: [ordemProducaoId], references: [idOrdemProducao])
+
+  /// Obrigatório para REQUISICAO/DEVOLUCAO.
+  reservaId String?  @map("reserva_id") @db.Uuid
+  reserva   Reserva? @relation(fields: [reservaId], references: [idReserva])
+
+  /// Quem registrou (usuário do sistema) e quem operava a máquina (crachá).
+  usuarioId String  @map("usuario_id") @db.Uuid
+  usuario   Usuario @relation("MovimentosRegistrados", fields: [usuarioId], references: [idUsuario])
+  /// ex-CdOperador. "Código Operador está vazio." é erro do RN.
+  operador  String
+
+  /// Turno é obrigatório ("Informe um turno válido."); `dataTurno` cai no
+  /// início do turno quando não informada.
+  turnoId   String   @map("turno_id") @db.Uuid
+  turno     Turno    @relation(fields: [turnoId], references: [idTurno])
+  dataTurno DateTime @map("data_turno")
+
+  inicio DateTime
+  fim    DateTime?
+  /// Derivado de (fim - inicio) quando fim > inicio. Segundos, unidade explícita.
+  duracaoSegundos Int? @map("duracao_segundos")
+
+  /// Se este movimento entra no cálculo de OEE (vem do TipoParada/TipoRefugo).
+  consideraOee Boolean @default(true) @map("considera_oee")
+
+  /// Uma coluna por unidade de medida — a do Centro de Trabalho é a que vale.
+  quantidadeUnidade    Decimal? @map("quantidade_unidade") @db.Decimal(18, 4)
+  quantidadeMetragem   Decimal? @map("quantidade_metragem") @db.Decimal(18, 4)
+  quantidadePeso       Decimal? @map("quantidade_peso") @db.Decimal(18, 4)
+  quantidadeArea       Decimal? @map("quantidade_area") @db.Decimal(18, 4)
+  quantidadeVolume     Decimal? @map("quantidade_volume") @db.Decimal(18, 4)
+  quantidadeEspecifica Decimal? @map("quantidade_especifica") @db.Decimal(18, 4)
+
+  /// Classificações. PARADA exige tipoParada; REFUGO exige tipoRefugo;
+  /// RECUSA exige tipoRecusa (regras do RN).
+  tipoParadaId String?     @map("tipo_parada_id") @db.Uuid
+  tipoParada   TipoParada? @relation(fields: [tipoParadaId], references: [idTipoParada])
+  tipoRefugoId String?     @map("tipo_refugo_id") @db.Uuid
+  tipoRefugo   TipoRefugo? @relation(fields: [tipoRefugoId], references: [idTipoRefugo])
+  tipoCausaId  String?     @map("tipo_causa_id") @db.Uuid
+  tipoCausa    TipoCausa?  @relation(fields: [tipoCausaId], references: [idTipoCausa])
+  tipoRecusaId String?     @map("tipo_recusa_id") @db.Uuid
+  tipoRecusa   TipoRecusa? @relation(fields: [tipoRecusaId], references: [idTipoRecusa])
+
+  /// Manutenção: solicitação → atendimento, com os tempos parciais.
+  tecnicoManutencao       String?   @map("tecnico_manutencao")
+  ordemManutencao         String?   @map("ordem_manutencao")
+  fimSolicitacao          DateTime? @map("fim_solicitacao")
+  tempoSolicitacaoSegundos Int?     @map("tempo_solicitacao_segundos")
+  fimManutencao           DateTime? @map("fim_manutencao")
+  tempoManutencaoSegundos Int?      @map("tempo_manutencao_segundos")
+  descricaoCausa          String?   @map("descricao_causa")
+
+  /// Integração ERP. `dataIntegracao` preenchida trava cancelamento.
+  reportaErp     Boolean   @default(false) @map("reporta_erp")
+  dataIntegracao DateTime? @map("data_integracao")
+
+  cancelado             Boolean @default(false)
+  usuarioCancelamentoId String? @map("usuario_cancelamento_id") @db.Uuid
+  usuarioCancelamento   Usuario? @relation("MovimentosCancelados", fields: [usuarioCancelamentoId], references: [idUsuario])
+  observacao            String?
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  /// O monitor online busca "o movimento aberto mais recente" de um conjunto de
+  /// tipos num centro — daí o índice por (centro, tipo, inicio).
+  @@index([centroTrabalhoId, tipo, inicio])
+  @@index([ordemProducaoId])
+  @@index([turnoId, dataTurno])
+  @@map("movimentos")
 }

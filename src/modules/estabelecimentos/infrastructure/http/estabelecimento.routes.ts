@@ -5,23 +5,36 @@ import { z } from 'zod';
 import { StatusRecurso } from '@shared/domain/status-recurso.js';
 import type { CriarEstabelecimentoUseCase } from '../../application/use-cases/criar-estabelecimento.use-case.js';
 import type { ListarEstabelecimentosUseCase } from '../../application/use-cases/listar-estabelecimentos.use-case.js';
+import type { BuscarEstabelecimentoUseCase } from '../../application/use-cases/buscar-estabelecimento.use-case.js';
+import type { EditarEstabelecimentoUseCase } from '../../application/use-cases/editar-estabelecimento.use-case.js';
+import type { InativarEstabelecimentoUseCase } from '../../application/use-cases/inativar-estabelecimento.use-case.js';
 import type { CriarNivelAcessoUseCase } from '../../application/use-cases/criar-nivel-acesso.use-case.js';
 import type { ListarNiveisAcessoUseCase } from '../../application/use-cases/listar-niveis-acesso.use-case.js';
 import type { ListarPermissoesUseCase } from '../../application/use-cases/listar-permissoes.use-case.js';
 
 const statusRecursoSchema = z.nativeEnum(StatusRecurso);
 
+const recursosSchema = z.object({
+  impressoras: statusRecursoSchema.optional(),
+  coletores: statusRecursoSchema.optional(),
+  checklist: statusRecursoSchema.optional(),
+  manufatura: statusRecursoSchema.optional(),
+});
+
 const criarEstabelecimentoBody = z.object({
   descricao: z.string().min(2),
-  recursos: z
-    .object({
-      impressoras: statusRecursoSchema.optional(),
-      coletores: statusRecursoSchema.optional(),
-      checklist: statusRecursoSchema.optional(),
-      manufatura: statusRecursoSchema.optional(),
-    })
-    .optional(),
+  recursos: recursosSchema.optional(),
 });
+
+// PUT descreve o estado final: `recursos` omitido desliga todos os módulos.
+// `status` é opcional — omitido preserva o status atual.
+const editarEstabelecimentoBody = z.object({
+  descricao: z.string().min(2),
+  recursos: recursosSchema.optional(),
+  status: statusRecursoSchema.optional(),
+});
+
+const idParam = z.object({ id: z.string().uuid() });
 
 const criarNivelAcessoBody = z.object({
   nome: z.string().min(2),
@@ -33,6 +46,9 @@ const criarNivelAcessoBody = z.object({
 export interface EstabelecimentoUseCases {
   criarEstabelecimento: CriarEstabelecimentoUseCase;
   listarEstabelecimentos: ListarEstabelecimentosUseCase;
+  buscarEstabelecimento: BuscarEstabelecimentoUseCase;
+  editarEstabelecimento: EditarEstabelecimentoUseCase;
+  inativarEstabelecimento: InativarEstabelecimentoUseCase;
   criarNivelAcesso: CriarNivelAcessoUseCase;
   listarNiveisAcesso: ListarNiveisAcessoUseCase;
   listarPermissoes: ListarPermissoesUseCase;
@@ -78,7 +94,7 @@ export function estabelecimentoRoutes(deps: EstabelecimentoRoutesDeps) {
       },
       async (request, reply) => {
         const { criarEstabelecimento } = deps.montarUseCases(request.prismaTenant);
-        const dto = await criarEstabelecimento.executar(request.body);
+        const dto = await criarEstabelecimento.executar({ ...request.body, usuarioId: request.usuarioId });
         return reply.status(201).send(dto);
       },
     );
@@ -100,6 +116,72 @@ export function estabelecimentoRoutes(deps: EstabelecimentoRoutesDeps) {
         const { listarEstabelecimentos } = deps.montarUseCases(request.prismaTenant);
         const dtos = await listarEstabelecimentos.executar();
         return reply.status(200).send(dtos);
+      },
+    );
+
+    // Mesma cadeia do GET da lista: quem enxerga a lista enxerga o item.
+    app.get(
+      '/estabelecimentos/:id',
+      {
+        preHandler: [deps.autenticar, deps.resolverTenant],
+        schema: {
+          tags: ['estabelecimentos'],
+          summary: 'Busca um estabelecimento do tenant por id',
+          security: [{ bearerAuth: [] }],
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { buscarEstabelecimento } = deps.montarUseCases(request.prismaTenant);
+        const dto = await buscarEstabelecimento.executar(request.params.id);
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // As mutações usam a cadeia completa: o RBAC vive no vínculo do usuário com
+    // o estabelecimento ATIVO (header), que não é necessariamente o :id editado.
+    app.put(
+      '/estabelecimentos/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('principal:update')],
+        schema: {
+          tags: ['estabelecimentos'],
+          summary: 'Edita um estabelecimento (descrição, módulos e status)',
+          security: seguranca,
+          params: idParam,
+          body: editarEstabelecimentoBody,
+        },
+      },
+      async (request, reply) => {
+        const { editarEstabelecimento } = deps.montarUseCases(request.prismaTenant);
+        const dto = await editarEstabelecimento.executar({
+          idEstabelecimento: request.params.id,
+          descricao: request.body.descricao,
+          recursos: request.body.recursos,
+          status: request.body.status,
+        });
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // DELETE inativa (soft delete) — as relações do schema são onDelete:
+    // Cascade, exclusão física levaria áreas, vínculos e coletores junto.
+    // Reversível via PUT com status ATIVO.
+    app.delete(
+      '/estabelecimentos/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('principal:delete')],
+        schema: {
+          tags: ['estabelecimentos'],
+          summary: 'Inativa um estabelecimento (não exclui fisicamente)',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { inativarEstabelecimento } = deps.montarUseCases(request.prismaTenant);
+        await inativarEstabelecimento.executar(request.params.id);
+        return reply.status(204).send();
       },
     );
 

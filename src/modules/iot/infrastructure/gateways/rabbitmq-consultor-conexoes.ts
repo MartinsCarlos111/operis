@@ -3,6 +3,8 @@ import type { ConsultorConexoesBroker } from '../../domain/gateways/consultor-co
 /** Credenciais de acesso à Management API, resolvidas por requisição. */
 export interface AcessoManagementBroker {
   host: string;
+  /** Porta AMQP/MQTT configurada para o tenant, exibida no monitor. */
+  porta: number;
   portaManagement: number;
   usuario: string;
   senha: string;

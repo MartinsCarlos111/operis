@@ -10,6 +10,7 @@ import type { EncryptionService } from '../../domain/gateways/encryption-service
 import type { HasherSenha } from '../../domain/gateways/hasher-senha.js';
 import type { ValidadorConexaoBanco, DadosConexaoBanco } from '../../domain/gateways/validador-conexao-banco.js';
 import type { ProvisionadorSchemaTenant } from '../../domain/gateways/provisionador-schema-tenant.js';
+import type { InicializadorDadosTenant } from '../../domain/gateways/inicializador-dados-tenant.js';
 import type { GeradorId } from '@shared/domain/gerador-id.js';
 import { paraTenantDTO, type TenantDTO } from '../dtos/tenant.dto.js';
 import { paraTenantAdministradorDTO, type TenantAdministradorDTO } from '../dtos/tenant-administrador.dto.js';
@@ -58,6 +59,7 @@ export class CriarTenantUseCase {
     private readonly hasher: HasherSenha,
     private readonly validadorConexao: ValidadorConexaoBanco,
     private readonly provisionador: ProvisionadorSchemaTenant,
+    private readonly inicializadorDadosTenant: InicializadorDadosTenant,
     private readonly ids: GeradorId,
   ) {}
 
@@ -88,8 +90,9 @@ export class CriarTenantUseCase {
     // 3. Cifrar a senha do banco.
     const senhaCifrada = this.encryption.cifrar(input.banco.senha);
 
-    // 4. Montar e salvar o agregado.
+    // 4. Montar o agregado e reservar o mesmo id para a identidade do Data Plane.
     const tenant = Tenant.criar({ idTenant: this.ids.gerar(), nome: input.nome, slug });
+    const idAdministrador = this.ids.gerar();
     const banco = ConfiguracaoBancoTenant.criar({
       idTenantDatabase: this.ids.gerar(),
       host: dadosConexao.host,
@@ -105,12 +108,22 @@ export class CriarTenantUseCase {
     if (input.provisionarSchema ?? true) {
       await this.provisionador.provisionar(dadosConexao);
     }
+
+    // 6. O JWT do administrador usa este mesmo id como `sub`. Por isso a
+    // identidade correspondente precisa existir no banco do tenant antes do
+    // primeiro estabelecimento ser criado.
+    await this.inicializadorDadosTenant.inicializar(dadosConexao, {
+      idUsuario: idAdministrador,
+      nome: input.administrador.nome,
+      email: emailAdmin.valor,
+    });
+
     banco.registrarConexaoBemSucedida();
     await this.tenants.salvar(tenant);
 
-    // 6. Criar o administrador do tenant (login vive no Control Plane).
+    // 7. Criar o administrador do tenant (login vive no Control Plane).
     const administrador = TenantAdministrador.criar({
-      idTenantAdministrador: this.ids.gerar(),
+      idTenantAdministrador: idAdministrador,
       tenantId: tenant.idTenant,
       nome: input.administrador.nome,
       email: emailAdmin,

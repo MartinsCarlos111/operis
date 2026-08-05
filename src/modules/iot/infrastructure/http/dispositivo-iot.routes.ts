@@ -7,6 +7,8 @@ import type { EditarDispositivoIotUseCase } from '../../application/use-cases/ed
 import type { ExcluirDispositivoIotUseCase } from '../../application/use-cases/excluir-dispositivo-iot.use-case.js';
 import type { BuscarDispositivoIotUseCase } from '../../application/use-cases/buscar-dispositivo-iot.use-case.js';
 import type { ListarDispositivosIotUseCase } from '../../application/use-cases/listar-dispositivos-iot.use-case.js';
+import type { ConsultarContadoresIotUseCase } from '../../application/use-cases/consultar-contadores-iot.use-case.js';
+import type { MonitorarBrokerIotUseCase } from '../../application/use-cases/monitorar-broker-iot.use-case.js';
 import {
   CONTEXTOS_IOT,
   FUNCOES_IOT,
@@ -53,6 +55,12 @@ const editarBody = z.object({
 
 const idParam = z.object({ id: z.string().uuid() });
 
+/** Janela de agregação dos contadores. Sem período, o use-case usa 24h. */
+const periodoQuery = z.object({
+  de: z.string().datetime().optional(),
+  ate: z.string().datetime().optional(),
+});
+
 /**
  * O tenantId é garantido pelo preHandler `resolverTenant`, que barra com 403
  * qualquer request cujo token não esteja vinculado a um tenant. O throw aqui é
@@ -73,10 +81,12 @@ export interface DispositivoIotUseCases {
   excluirDispositivo: ExcluirDispositivoIotUseCase;
   buscarDispositivo: BuscarDispositivoIotUseCase;
   listarDispositivos: ListarDispositivosIotUseCase;
+  consultarContadores: ConsultarContadoresIotUseCase;
 }
 
 export interface DispositivoIotRoutesDeps {
   montarUseCases: (prisma: PrismaClient) => DispositivoIotUseCases;
+  monitorarBroker: MonitorarBrokerIotUseCase;
   autenticar: preHandlerAsyncHookHandler;
   resolverTenant: preHandlerAsyncHookHandler;
   exigirEstabelecimento: preHandlerAsyncHookHandler;
@@ -94,6 +104,22 @@ export function dispositivoIotRoutes(deps: DispositivoIotRoutesDeps) {
 
   return async function plugin(fastify: FastifyInstance): Promise<void> {
     const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+    app.get(
+      '/monitor-broker',
+      {
+        preHandler: [...contexto, deps.autorizar('dispositivos-iot:list')],
+        schema: {
+          tags: ['dispositivos-iot'],
+          summary: 'Estado do broker IoT do tenant autenticado',
+          security: seguranca,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.monitorarBroker.executar(tenantIdDe(request));
+        return reply.status(200).send(dto);
+      },
+    );
 
     app.get(
       '/dispositivos-iot',
@@ -181,6 +207,32 @@ export function dispositivoIotRoutes(deps: DispositivoIotRoutesDeps) {
           tenantId: tenantIdDe(request),
           estabelecimentoId: request.estabelecimentoId,
           ...request.body,
+        });
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // Contadores do período: o "contador de peças" da tela, agregado a partir
+    // das leituras que o worker gravou.
+    app.get(
+      '/dispositivos-iot/:id/contadores',
+      {
+        preHandler: [...contexto, deps.autorizar('dispositivos-iot:list')],
+        schema: {
+          tags: ['dispositivos-iot'],
+          summary: 'Contadores das entradas de um coletor no período',
+          security: seguranca,
+          params: idParam,
+          querystring: periodoQuery,
+        },
+      },
+      async (request, reply) => {
+        const { consultarContadores } = deps.montarUseCases(request.prismaTenant);
+        const dto = await consultarContadores.executar({
+          dispositivoId: request.params.id,
+          estabelecimentoId: request.estabelecimentoId,
+          de: request.query.de ? new Date(request.query.de) : undefined,
+          ate: request.query.ate ? new Date(request.query.ate) : undefined,
         });
         return reply.status(200).send(dto);
       },

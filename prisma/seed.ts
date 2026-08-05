@@ -25,6 +25,10 @@ const GRUPOS_PERMISSOES: Record<string, { acoes: string[]; descricao: string }> 
   },
   impressoras: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Gestão de impressoras' },
   coletores: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Gestão de coletores' },
+  'dispositivos-iot': {
+    acoes: ['list', 'create', 'update', 'delete'],
+    descricao: 'Cadastro de coletores IoT',
+  },
   checklist: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo de checklist' },
   manufatura: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo de manufatura' },
   configuracoes: {

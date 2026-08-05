@@ -33,24 +33,36 @@ export class Estabelecimento {
     descricao: string;
     recursos?: { [K in keyof RecursosEstabelecimento]?: StatusRecurso | undefined } | undefined;
   }): Estabelecimento {
-    const descricao = input.descricao.trim();
-    if (descricao.length < 2) {
-      throw new Error('A descrição do estabelecimento deve ter ao menos 2 caracteres');
-    }
     const agora = new Date();
     return new Estabelecimento({
       idEstabelecimento: input.idEstabelecimento,
-      descricao,
+      descricao: Estabelecimento.exigirDescricao(input.descricao),
       status: StatusRecurso.ATIVO,
-      recursos: {
-        impressoras: input.recursos?.impressoras ?? StatusRecurso.INATIVO,
-        coletores: input.recursos?.coletores ?? StatusRecurso.INATIVO,
-        checklist: input.recursos?.checklist ?? StatusRecurso.INATIVO,
-        manufatura: input.recursos?.manufatura ?? StatusRecurso.INATIVO,
-      },
+      recursos: Estabelecimento.completarRecursos(input.recursos),
       criadoEm: agora,
       atualizadoEm: agora,
     });
+  }
+
+  /** Invariante da descrição — a mesma na criação e na edição. */
+  private static exigirDescricao(bruto: string): string {
+    const descricao = (bruto ?? '').trim();
+    if (descricao.length < 2) {
+      throw new Error('A descrição do estabelecimento deve ter ao menos 2 caracteres');
+    }
+    return descricao;
+  }
+
+  /** Recurso omitido é recurso desligado — nunca fica indefinido. */
+  private static completarRecursos(
+    parcial?: { [K in keyof RecursosEstabelecimento]?: StatusRecurso | undefined } | undefined,
+  ): RecursosEstabelecimento {
+    return {
+      impressoras: parcial?.impressoras ?? StatusRecurso.INATIVO,
+      coletores: parcial?.coletores ?? StatusRecurso.INATIVO,
+      checklist: parcial?.checklist ?? StatusRecurso.INATIVO,
+      manufatura: parcial?.manufatura ?? StatusRecurso.INATIVO,
+    };
   }
 
   static restaurar(props: EstabelecimentoProps): Estabelecimento {
@@ -92,6 +104,23 @@ export class Estabelecimento {
 
   ativar(): void {
     this.props.status = StatusRecurso.ATIVO;
+    this.props.atualizadoEm = new Date();
+  }
+
+  /**
+   * Edita os dados cadastrais. O conjunto de recursos é substituído por
+   * inteiro (recurso omitido → INATIVO), e não mesclado: o PUT descreve o
+   * estado final, então desmarcar um módulo na tela precisa desligá-lo de fato.
+   *
+   * `status` não entra aqui de propósito — ativar/inativar é transição de ciclo
+   * de vida e tem seus próprios métodos.
+   */
+  alterar(input: {
+    descricao: string;
+    recursos?: { [K in keyof RecursosEstabelecimento]?: StatusRecurso | undefined } | undefined;
+  }): void {
+    this.props.descricao = Estabelecimento.exigirDescricao(input.descricao);
+    this.props.recursos = Estabelecimento.completarRecursos(input.recursos);
     this.props.atualizadoEm = new Date();
   }
 

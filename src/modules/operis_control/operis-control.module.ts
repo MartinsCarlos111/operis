@@ -21,6 +21,7 @@ import { AesGcmEncryptionService } from './infrastructure/gateways/aes-gcm-encry
 import { ScryptHasherSenha } from './infrastructure/gateways/scrypt-hasher-senha.js';
 import { PrismaValidadorConexao } from './infrastructure/gateways/prisma-validador-conexao.js';
 import { PrismaProvisionadorSchema } from './infrastructure/gateways/prisma-provisionador-schema.js';
+import { PrismaInicializadorDadosTenant } from './infrastructure/gateways/prisma-inicializador-dados-tenant.js';
 import { TenantResolverControlPlane } from './infrastructure/runtime/tenant-resolver.control-plane.js';
 import { adminRoutes } from './infrastructure/http/admin.routes.js';
 
@@ -54,6 +55,7 @@ export function construirModuloOperisControl(
   const hasher = new ScryptHasherSenha();
   const validadorConexao = new PrismaValidadorConexao();
   const provisionador = new PrismaProvisionadorSchema();
+  const inicializadorDadosTenant = new PrismaInicializadorDadosTenant();
   const monitorBroker = new RabbitMqManagementMonitor(opcoes.portaManagementBroker);
 
   // Resolver do Connection Manager: sabe traduzir tenantId → conexão (senha
@@ -70,6 +72,7 @@ export function construirModuloOperisControl(
     if (!config) return null;
     return {
       host: config.host,
+      porta: config.porta,
       portaManagement: opcoes.portaManagementBroker ?? 15672,
       usuario: config.usuario,
       senha: encryption.decifrar(config.senhaCifrada),
@@ -96,6 +99,7 @@ export function construirModuloOperisControl(
         hasher,
         validadorConexao,
         provisionador,
+        inicializadorDadosTenant,
         ids,
       ),
       listarTenants: new ListarTenantsUseCase(tenants),

@@ -17,6 +17,7 @@ import { construirModuloAreaUsuarios } from '@modules/area_usuarios/area-usuario
 import { construirModuloCrachas } from '@modules/crachas/crachas.module.js';
 import { construirModuloLayouts } from '@modules/layouts/layouts.module.js';
 import { construirModuloIot } from '@modules/iot/iot.module.js';
+import { construirModuloManufatura } from '@modules/manufatura/manufatura.module.js';
 import { construirModuloOperisControl } from '@modules/operis_control/operis-control.module.js';
 
 export interface BuildAppOptions {
@@ -96,6 +97,7 @@ export function buildApp({
   // O acesso ao broker vem do Control Plane: é aqui, no composition root, que
   // os dois planos se encontram — o módulo iot não importa operis_control.
   const iot = construirModuloIot(ids, usuarios.cadeia, operisControl.resolverAcessoBroker);
+  const manufatura = construirModuloManufatura(ids, usuarios.cadeia);
 
   app.register(usuarios.routes);
   app.register(estabelecimentos.routes);
@@ -107,6 +109,7 @@ export function buildApp({
   app.register(crachas.routes);
   app.register(layouts.routes);
   app.register(iot.routes);
+  app.register(manufatura.routes);
   app.register(operisControl.routes);
 
   return { app, connectionManager };
