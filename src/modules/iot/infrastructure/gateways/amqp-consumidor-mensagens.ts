@@ -16,14 +16,35 @@ export interface AcessoAmqp {
 export interface OpcoesConsumidorAmqp {
   /** Fila durável onde as mensagens dos coletores são retidas. */
   fila?: string;
-  /** Binding na amq.topic. `devices.#` captura todos os modelos e seriais. */
+  /** Binding na amq.topic. */
   routingKey?: string;
   /** Mensagens não confirmadas entregues por vez (backpressure). */
   prefetch?: number;
 }
 
 const FILA_PADRAO = 'operis.iot.movimentos';
-const ROUTING_KEY_PADRAO = 'devices.#';
+/**
+ * O firmware (`visione_mqtt.hpp`) publica tudo que envia ao servidor com a
+ * routing key literal "consumer" — `devices.*` é o sentido servidor→dispositivo
+ * (tópicos que o firmware assina para receber comandos), não o inverso.
+ */
+const ROUTING_KEY_PADRAO = 'consumer';
+
+/**
+ * `type` no payload do firmware é o índice numérico do enum `EnumTipoMsgIOT`
+ * (serializado como number pelo `System.Text.Json`), não a string do nome.
+ * Mesma ordem de `TIPOS_MENSAGEM_IOT`.
+ */
+const TIPO_POR_INDICE = [
+  'REGISTER',
+  'REPORT',
+  'MOVIMENT',
+  'CONFIGURATION',
+  'UPDATE',
+  'UPDATESTARTED',
+  'UPDATECOMPLETED',
+  'UPDATEFAILED',
+] as const;
 
 /**
  * Consumidor AMQP das mensagens publicadas pelos coletores.
@@ -97,9 +118,10 @@ export class AmqpConsumidorMensagens implements ConsumidorMensagensIot {
   }
 
   /**
-   * Extrai tipo/serial/dados do payload. O serial vem do último segmento da
-   * routing key (`devices.<modelo>.<serial>`) e, se o corpo trouxer um serial
-   * explícito, ele tem precedência.
+   * Extrai tipo/serial/dados do payload. O firmware sempre publica com
+   * routing key fixa "consumer" e traz o serial no corpo (`device_id`/`serial`);
+   * o fallback pelo último segmento da routing key só cobre um binding
+   * alternativo por `devices.<modelo>.<serial>`, caso um dia exista.
    */
   private decodificar(conteudo: Buffer, routingKey: string): MensagemIot {
     const texto = conteudo.toString('utf8');
@@ -112,14 +134,30 @@ export class AmqpConsumidorMensagens implements ConsumidorMensagensIot {
       return { tipo: 'DESCONHECIDO', serial: this.serialDaRoutingKey(routingKey), dados: texto };
     }
 
-    const serialCorpo = typeof corpo.serial === 'string' ? corpo.serial : undefined;
-    const tipo = typeof corpo.type === 'string' ? corpo.type : String(corpo.tipo ?? 'DESCONHECIDO');
+    // O firmware identifica o dispositivo por "device_id" (GenericMessageModel
+    // do legado); "serial" é aceito também para não quebrar outras origens.
+    const serialCorpo =
+      typeof corpo.device_id === 'string'
+        ? corpo.device_id
+        : typeof corpo.serial === 'string'
+          ? corpo.serial
+          : undefined;
+    const tipo = this.resolverTipo(corpo.type ?? corpo.tipo);
 
     return {
       tipo,
       serial: serialCorpo ?? this.serialDaRoutingKey(routingKey),
       dados: corpo.data ?? corpo.dados ?? corpo,
     };
+  }
+
+  /** Aceita tanto o índice numérico do firmware quanto o nome já em string. */
+  private resolverTipo(valor: unknown): string {
+    if (typeof valor === 'string' && valor.trim() !== '') return valor;
+    if (typeof valor === 'number' && Number.isInteger(valor)) {
+      return TIPO_POR_INDICE[valor] ?? 'DESCONHECIDO';
+    }
+    return 'DESCONHECIDO';
   }
 
   private serialDaRoutingKey(routingKey: string): string {

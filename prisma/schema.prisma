@@ -55,17 +55,22 @@ model Estabelecimento {
   dispositivosIot     DispositivoIot[]
 
   // Área Manufatura (só faz sentido quando `manufatura` está ATIVO).
-  calendarios     Calendario[]
-  gruposMaquina   GrupoMaquina[]
-  tiposCausa      TipoCausa[]
-  tiposParada     TipoParada[]
-  tiposRecusa     TipoRecusa[]
-  tiposRefugo     TipoRefugo[]
-  centrosTrabalho CentroTrabalho[]
-  artigos         Artigo[]
-  configuracoesCampos ConfiguracaoCampo[]
-  planosProducao  PlanoProducao[]
-  ordensProducao  OrdemProducao[]
+  calendarios         Calendario[]
+  gruposMaquina       GrupoMaquina[]
+  tiposCausa          TipoCausa[]
+  tiposParada         TipoParada[]
+  tiposRecusa         TipoRecusa[]
+  tiposRefugo         TipoRefugo[]
+  qualidadesItem      QualidadeItem[]
+  itens               Item[]
+  firmwaresIot        FirmwareIot[]
+  centrosTrabalho     CentroTrabalho[]
+  planosProducao      PlanoProducao[]
+  ordensProducao      OrdemProducao[]
+  ferramentas         Ferramenta[]
+  etiquetas           Etiqueta[]
+  notificacoes        Notificacao[]
+  calculosIndicadores CalculoIndicadores[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -175,15 +180,18 @@ model DispositivoIot {
   /// Último IP conhecido. Informativo — a fonte viva é o broker.
   ip             String?
 
-  /// Vínculo com o centro de trabalho (ex-CentroTrabalhoIOT). Texto por ora:
-  /// o módulo de manufatura ainda não foi migrado.
-  centroTrabalho String? @map("centro_trabalho")
+  /// Vínculo com o centro de trabalho (ex-CentroTrabalhoIOT). Opcional — um
+  /// coletor pode existir sem centro de trabalho vinculado ainda.
+  centroTrabalhoId String?         @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho   CentroTrabalho? @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho])
 
   estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
   estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
 
-  entradas EntradaIot[]
-  leituras LeituraIot[]
+  entradas             EntradaIot[]
+  leituras             LeituraIot[]
+  falhasLeitura        FalhaLeituraIot[]
+  atualizacoesFirmware AtualizacaoFirmwareIot[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -220,8 +228,8 @@ model EntradaIot {
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
-  // Uma porta não pode ser configurada duas vezes no mesmo dispositivo.
-  @@unique([dispositivoId, input, tipo])
+  // Uma porta física (1-5) só pode ter uma configuração por dispositivo.
+  @@unique([dispositivoId, input])
   @@index([dispositivoId])
   @@map("entradas_iot")
 }
@@ -257,24 +265,89 @@ model LeituraIot {
   @@map("leituras_iot")
 }
 
+/// Modo elétrico de leitura do sensor na porta (ex-EnumTypeIOT do firmware).
+/// Decide o edge de interrupção no ESP32 (`get_read_mode_from_type`): PNP/NPN
+/// usam RISING/FALLING fixo; os CHANGE_* usam CHANGE (ambas as bordas).
 enum TipoEntradaIot {
-  DIGITAL
-  ANALOGICA
+  PNP
+  NPN
+  CHANGE_PNP
+  CHANGE_NPN
 }
 
+/// O que o valor da porta representa (ex-EnumContextIOT do firmware). Os 10
+/// primeiros valem para portas digitais (Input 1-4); os 8 últimos só para a
+/// porta analógica (Input 5) — a tela troca a lista conforme a porta.
 enum ContextoIot {
-  PRODUCAO
-  PARADA
-  QUALIDADE
-  MANUTENCAO
-}
-
-enum FuncaoIot {
-  CONTADOR
-  STATUS
-  SINAL
+  // --- Digitais ---
+  LIGADO_DESLIGADO
+  PRODUZINDO_NAO_PRODUZINDO
+  GENERICO
+  VELOCIDADE_ANGULAR
+  VELOCIDADE_LINEAR
+  CONTAGEM_CICLOS
+  CONTAGEM_ITENS
+  METROS_PRODUZIDOS
+  VOLUME_PRODUZIDO
+  TEMPO_DECORRIDO
+  // --- Analógicos (só Input 5) ---
   TEMPERATURA
   PRESSAO
+  PERCENTUAL
+  VIBRACAO
+  VAZAO_VOLUMETRICA
+  VAZAO_MASSICA
+  DISTANCIA
+  CORRENTE
+}
+
+/// Como o firmware interpreta os pulsos/sinal da porta (ex-EnumFunctionIOT).
+enum FuncaoIot {
+  PULSO
+  ACIONADO
+  ENCODER
+  PULSO_INICIO
+  PULSO_FIM
+}
+
+/// Por que um movimento de coletor foi descartado pelo pipeline de ingestão
+/// (paridade com `MotivoDescarte` do RegistrarMovimentoIotUseCase).
+enum MotivoFalhaLeituraIot {
+  DISPOSITIVO_NAO_CADASTRADO
+  ENTRADA_NAO_CONFIGURADA
+  ENTRADA_DESABILITADA
+  PAYLOAD_INVALIDO
+}
+
+/// Movimento de coletor descartado na ingestão (o inverso de `LeituraIot`).
+/// A tela de monitoramento mostra "quantas peças o coletor pegou" pelos
+/// contadores e "quantas/porquê falhou" por estas linhas — sem depender de log
+/// do worker, que some com o processo.
+///
+/// `dispositivoId` é nulo quando o serial ainda não está cadastrado; `serial`
+/// está sempre presente para capturar até a falha de aparelho desconhecido.
+model FalhaLeituraIot {
+  idFalhaLeituraIot String @id @default(uuid()) @db.Uuid
+
+  dispositivoId String?         @map("dispositivo_id") @db.Uuid
+  dispositivo   DispositivoIot? @relation(fields: [dispositivoId], references: [idDispositivoIot], onDelete: Cascade)
+
+  /// Serial que originou o movimento (client_id MQTT).
+  serial String
+
+  /// Porta física de origem, quando o payload a trouxe.
+  input  Int
+  motivo MotivoFalhaLeituraIot
+
+  ocorridoEm   DateTime @map("ocorrido_em")
+  registradoEm DateTime @default(now()) @map("registrado_em")
+
+  /// Deduplica reentregas MQTT, como em LeituraIot.
+  chaveEvento String @unique @map("chave_evento")
+
+  @@index([dispositivoId, ocorridoEm])
+  @@index([serial, ocorridoEm])
+  @@map("falhas_leitura_iot")
 }
 
 /// Crachá (migrado de Octopus `Cracha`). Identifica uma pessoa nos terminais.
@@ -358,6 +431,8 @@ model LayoutEtiqueta {
   /// Template ZPL da etiqueta (ex-layoutZpl).
   zpl       String @default("")
 
+  etiquetas Etiqueta[]
+
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
@@ -384,7 +459,8 @@ model RegraNotificacao {
   conteudo           String
   status             StatusRecurso @default(ATIVO)
 
-  condicoes CondicaoNotificacao[]
+  condicoes    CondicaoNotificacao[]
+  notificacoes Notificacao[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -434,22 +510,6 @@ model Permissao {
   @@map("permissoes")
 }
 
-model ConfiguracaoCampo {
-  idConfiguracaoCampo String          @id @default(uuid()) @db.Uuid
-  estabelecimentoId   String          @map("estabelecimento_id") @db.Uuid
-  estabelecimento     Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
-  tela                String
-  campo               String
-  visivel             Boolean         @default(true)
-  ordem               Int             @default(0)
-  criadoEm            DateTime        @default(now()) @map("criado_em")
-  atualizadoEm        DateTime        @updatedAt @map("atualizado_em")
-
-  @@unique([estabelecimentoId, tela, campo])
-  @@index([estabelecimentoId, tela])
-  @@map("configuracoes_campos")
-}
-
 /// Nível de acesso (perfil), escopado por estabelecimento — multi-tenant.
 /// Cada nível seleciona um subconjunto de permissões do catálogo.
 model NivelAcesso {
@@ -490,10 +550,11 @@ model NivelAcessoPermissao {
 model Usuario {
   movimentosRegistrados Movimento[] @relation("MovimentosRegistrados")
   movimentosCancelados  Movimento[] @relation("MovimentosCancelados")
-  idUsuario String  @id @default(uuid()) @db.Uuid
-  nome      String
-  email     String  @unique
-  biometria Boolean @default(false)
+  etiquetasGeradas      Etiqueta[]  @relation("EtiquetasGeradas")
+  idUsuario             String      @id @default(uuid()) @db.Uuid
+  nome                  String
+  email                 String      @unique
+  biometria             Boolean     @default(false)
 
   status StatusRecurso @default(ATIVO)
 
@@ -560,6 +621,7 @@ model Tenant {
   database        TenantDatabase?
   rabbitmq        TenantRabbitMq?
   smtp            TenantSmtp?
+  minio           TenantMinio?
   administradores TenantAdministrador[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
@@ -651,6 +713,36 @@ model TenantSmtp {
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   @@map("tenants_smtp")
+}
+
+/// Configuração de object storage S3-compatível (MinIO) do tenant — parte do
+/// Control Plane, gerida pelo super-admin. Guarda binários de firmware IoT
+/// (`FirmwareIot`). Mesmo padrão de segredo cifrado do TenantRabbitMq/TenantSmtp.
+model TenantMinio {
+  idTenantMinio String @id @default(uuid()) @db.Uuid
+
+  tenantId String @unique @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [idTenant], onDelete: Cascade)
+
+  host   String
+  porta  Int
+  bucket String
+  /// ex-accessKey. Texto puro — equivalente ao "usuário" do RabbitMQ/SMTP.
+  accessKey String @map("access_key")
+
+  /// iv + authTag + ciphertext serializados. Nunca em texto puro.
+  secretKeyEncrypted String @map("secret_key_encrypted")
+  encryptionVersion  Int    @default(1) @map("encryption_version")
+
+  sslEnabled Boolean @default(true) @map("ssl_enabled")
+  /// MinIO/S3-compatible tipicamente usa path-style (`host/bucket/obj`) em vez
+  /// de virtual-hosted-style (`bucket.host/obj`).
+  pathStyleAccess Boolean @default(true) @map("path_style_access")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("tenants_minio")
 }
 
 /// Administrador de UM tenant específico. Vive no Control Plane (não no banco
@@ -821,8 +913,8 @@ model GrupoMaquina {
   estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
 
   centrosTrabalho CentroTrabalho[]
-  planosProducao PlanoProducao[]
-  ordensProducao OrdemProducao[]
+  planosProducao  PlanoProducao[]
+  ordensProducao  OrdemProducao[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -834,7 +926,7 @@ model GrupoMaquina {
 
 /// Tipo de causa de parada (migrado de Octopus `TipoCausa`).
 model TipoCausa {
-  movimentos Movimento[]
+  movimentos         Movimento[]
   idTipoCausa        String                  @id @default(uuid()) @db.Uuid
   codigo             String
   descricao          String
@@ -860,7 +952,7 @@ model TipoCausa {
 /// Tipo de parada (migrado de Octopus `TipoParada`). `consideraOee` decide se
 /// a parada entra no cálculo de disponibilidade do OEE.
 model TipoParada {
-  movimentos Movimento[]
+  movimentos          Movimento[]
   idTipoParada        String                   @id @default(uuid()) @db.Uuid
   codigo              String
   descricao           String
@@ -885,9 +977,102 @@ model TipoParada {
   @@map("tipos_parada")
 }
 
+/// Qualidade do item (migrado de Octopus `QualidadeItem`). Cadastro simples de
+/// apoio — no legado só tinha a descrição, sem código nem status.
+model QualidadeItem {
+  idQualidadeItem String @id @default(uuid()) @db.Uuid
+  descricao       String
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  itens ItemQualidadeItem[]
+
+  @@unique([estabelecimentoId, descricao])
+  @@index([estabelecimentoId])
+  @@map("qualidades_item")
+}
+
+/// Item (migrado de Octopus `Item`). No legado o vínculo com QualidadeItem era
+/// uma lista de descrições serializada em string (`;`-delimitada); aqui vira
+/// uma relação N:N real via `ItemQualidadeItem`.
+model Item {
+  idItem    String        @id @default(uuid()) @db.Uuid
+  codigo    String
+  descricao String
+  status    StatusRecurso @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  qualidades ItemQualidadeItem[]
+  centrosTrabalho CentroTrabalhoItem[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("itens")
+}
+
+/// Vínculo Item × Centro de Trabalho (migrado de Octopus `CentroTrabalhoItem`).
+/// Diferente de `ItemQualidadeItem`, carrega atributos de negócio (ciclo
+/// produtivo, refugo, tempos) — por isso tem PK própria, não chave composta.
+/// O legado não tinha UNIQUE constraint (só regra de negócio); aqui a
+/// unicidade do par é reforçada no banco.
+model CentroTrabalhoItem {
+  idCentroTrabalhoItem String @id @default(uuid()) @db.Uuid
+
+  itemId          String @map("item_id") @db.Uuid
+  centroTrabalhoId String @map("centro_trabalho_id") @db.Uuid
+
+  item          Item          @relation(fields: [itemId], references: [idItem], onDelete: Cascade)
+  centroTrabalho CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+
+  /// Peças produzidas por hora — inverso de cicloProdutivoPecaSegundos (calculado no front).
+  cicloProdutivoHora        Decimal? @map("ciclo_produtivo_hora") @db.Decimal(18, 2)
+  /// Tempo para produzir 1 peça, em segundos (ex-TimeSpan HH:mm:ss).
+  cicloProdutivoPecaSegundos Int?    @default(0) @map("ciclo_produtivo_peca_segundos")
+  /// Tempo de preparação, em segundos.
+  tempoPreparacaoSegundos   Int?     @map("tempo_preparacao_segundos")
+  fatorRefugo               Decimal? @map("fator_refugo") @db.Decimal(18, 2)
+  qtdRefugo                 Decimal? @map("qtd_refugo") @db.Decimal(18, 2)
+  qtdPerda                  Decimal? @map("qtd_perda") @db.Decimal(18, 2)
+  apontarPreparacao         Decimal? @map("apontar_preparacao") @db.Decimal(18, 2)
+  /// Tempo de máquina, em segundos.
+  tempoMaquinaSegundos      Int?     @map("tempo_maquina_segundos")
+  loteMultiplo              Decimal? @map("lote_multiplo") @db.Decimal(18, 2)
+  ativo                     Boolean  @default(true)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([itemId, centroTrabalhoId])
+  @@index([centroTrabalhoId])
+  @@map("centros_trabalho_itens")
+}
+
+/// Tabela de junção N:N pura entre Item e QualidadeItem (mesmo padrão de
+/// `NivelAcessoPermissao`: chave composta pelos dois FKs, sem atributo extra).
+model ItemQualidadeItem {
+  itemId          String @map("item_id") @db.Uuid
+  qualidadeItemId String @map("qualidade_item_id") @db.Uuid
+
+  item          Item          @relation(fields: [itemId], references: [idItem], onDelete: Cascade)
+  qualidadeItem QualidadeItem @relation(fields: [qualidadeItemId], references: [idQualidadeItem], onDelete: Cascade)
+
+  @@id([itemId, qualidadeItemId])
+  @@index([qualidadeItemId])
+  @@map("itens_qualidades_item")
+}
+
 /// Tipo de recusa (migrado de Octopus `TipoRecusa`).
 model TipoRecusa {
-  movimentos Movimento[]
+  movimentos   Movimento[]
   idTipoRecusa String            @id @default(uuid()) @db.Uuid
   codigo       String
   descricao    String
@@ -911,7 +1096,7 @@ model TipoRecusa {
 /// Tipo de refugo (migrado de Octopus `TipoRefugo`). `consideraOee` decide se
 /// o refugo entra no índice de qualidade.
 model TipoRefugo {
-  movimentos Movimento[]
+  movimentos         Movimento[]
   idTipoRefugo       String            @id @default(uuid()) @db.Uuid
   codigo             String
   descricao          String
@@ -952,7 +1137,7 @@ model TipoRefugo {
 /// EquipamentoManufatura legado tem ~50 campos, 12 FKs de botão apontando de
 /// volta para CentroTrabalho e depende de Terminais, que ainda não existe.
 model CentroTrabalho {
-  movimentos Movimento[]
+  movimentos       Movimento[]
   idCentroTrabalho String        @id @default(uuid()) @db.Uuid
   codigo           String
   descricao        String
@@ -987,18 +1172,23 @@ model CentroTrabalho {
   tipoUnidadeMedida        TipoUnidadeMedida @default(UNIDADE) @map("tipo_unidade_medida")
 
   /// Metas de turno (%).
-  metaDispTurno   Decimal? @map("meta_disp_turno") @db.Decimal(5, 2)
-  metaDesempTurno Decimal? @map("meta_desemp_turno") @db.Decimal(5, 2)
-  metaQualiTurno  Decimal? @map("meta_quali_turno") @db.Decimal(5, 2)
-  metaOeeTurno    Decimal? @map("meta_oee_turno") @db.Decimal(5, 2)
+  metaDispTurno    Decimal? @map("meta_disp_turno") @db.Decimal(5, 2)
+  metaDesempTurno  Decimal? @map("meta_desemp_turno") @db.Decimal(5, 2)
+  metaQualiTurno   Decimal? @map("meta_quali_turno") @db.Decimal(5, 2)
+  metaOeeTurno     Decimal? @map("meta_oee_turno") @db.Decimal(5, 2)
   /// CentroTrabalhoRN recusa valor negativo.
-  custoMaquinaHora Decimal @default(0) @map("custo_maquina_hora") @db.Decimal(18, 4)
+  custoMaquinaHora Decimal  @default(0) @map("custo_maquina_hora") @db.Decimal(18, 4)
 
-  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
-  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
-  artigosCentros    ArtigoCentroTrabalho[]
-  planosProducao    PlanoProducao[]
-  ordensProducao    OrdemProducao[]
+  estabelecimentoId    String                     @map("estabelecimento_id") @db.Uuid
+  estabelecimento      Estabelecimento            @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  planosProducao       PlanoProducao[]
+  ordensProducao       OrdemProducao[]
+  ferramentas          CentroTrabalhoFerramenta[]
+  consumosFerramenta   ConsumoFerramenta[]
+  calculosIndicadores  CalculoIndicadores[]
+  centroTrabalhoOnline CentroTrabalhoOnline?
+  itens                CentroTrabalhoItem[]
+  dispositivosIot      DispositivoIot[]
 
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
@@ -1010,70 +1200,28 @@ model CentroTrabalho {
   @@map("centros_trabalho")
 }
 
-/// Artigo/item de manufatura. O cadastro e global somente dentro do tenant;
-/// o relacionamento produtivo e definido por CentroTrabalho.
-model Artigo {
-  idArtigo String @id @default(uuid()) @map("id_artigo") @db.Uuid
-  codigo String
-  descricao String
-  qualidades String?
-  status StatusRecurso @default(ATIVO)
-  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
-  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
-  centrosTrabalho ArtigoCentroTrabalho[]
-  criadoEm DateTime @default(now()) @map("criado_em")
-  atualizadoEm DateTime @updatedAt @map("atualizado_em")
-  @@unique([estabelecimentoId, codigo])
-  @@index([estabelecimentoId, status])
-  @@map("artigos")
-}
-
-/// Parametros do artigo em um centro de trabalho (legado CentroTrabalhoItem).
-model ArtigoCentroTrabalho {
-  idArtigoCentroTrabalho String @id @default(uuid()) @map("id_artigo_centro_trabalho") @db.Uuid
-  artigoId String @map("artigo_id") @db.Uuid
-  centroTrabalhoId String @map("centro_trabalho_id") @db.Uuid
-  cicloProdutivoHora Float @default(0) @map("ciclo_produtivo_hora")
-  cicloProdutivoPecaSegundos Float @default(0) @map("ciclo_produtivo_peca_segundos")
-  tempoPreparacaoSegundos Float @default(0) @map("tempo_preparacao_segundos")
-  fatorRefugo Float @default(0) @map("fator_refugo")
-  quantidadeRefugo Float @default(0) @map("quantidade_refugo")
-  quantidadePerda Float @default(0) @map("quantidade_perda")
-  apontarPreparacao Float @default(0) @map("apontar_preparacao")
-  tempoMaquinaSegundos Float @default(0) @map("tempo_maquina_segundos")
-  loteMultiplo Float @default(0) @map("lote_multiplo")
-  ativo Boolean @default(true)
-  artigo Artigo @relation(fields: [artigoId], references: [idArtigo], onDelete: Cascade)
-  centroTrabalho CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
-  criadoEm DateTime @default(now()) @map("criado_em")
-  atualizadoEm DateTime @updatedAt @map("atualizado_em")
-  @@unique([artigoId, centroTrabalhoId])
-  @@index([centroTrabalhoId, ativo])
-  @@map("artigos_centros_trabalho")
-}
-
 /// Plano de producao usado para gerar ordens previamente planejadas.
 model PlanoProducao {
-  idPlanoProducao String @id @default(uuid()) @db.Uuid
-  codigo         String
-  descricao      String
-  itemCodigo     String
-  itemDescricao  String?
-  quantidade     Float
-  unidadeMedida  TipoUnidadeMedida @default(UNIDADE) @map("unidade_medida")
-  inicioPlanejado DateTime? @map("inicio_planejado")
-  fimPlanejado    DateTime? @map("fim_planejado")
-  status          StatusRecurso @default(ATIVO)
+  idPlanoProducao String            @id @default(uuid()) @db.Uuid
+  codigo          String
+  descricao       String
+  itemCodigo      String
+  itemDescricao   String?
+  quantidade      Float
+  unidadeMedida   TipoUnidadeMedida @default(UNIDADE) @map("unidade_medida")
+  inicioPlanejado DateTime?         @map("inicio_planejado")
+  fimPlanejado    DateTime?         @map("fim_planejado")
+  status          StatusRecurso     @default(ATIVO)
 
-  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
   estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
-  centroTrabalhoId  String? @map("centro_trabalho_id") @db.Uuid
+  centroTrabalhoId  String?         @map("centro_trabalho_id") @db.Uuid
   centroTrabalho    CentroTrabalho? @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho])
-  grupoMaquinaId    String? @map("grupo_maquina_id") @db.Uuid
-  grupoMaquina      GrupoMaquina? @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
+  grupoMaquinaId    String?         @map("grupo_maquina_id") @db.Uuid
+  grupoMaquina      GrupoMaquina?   @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
   ordensProducao    OrdemProducao[]
 
-  criadoEm DateTime @default(now()) @map("criado_em")
+  criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   @@unique([estabelecimentoId, codigo])
@@ -1084,49 +1232,51 @@ model PlanoProducao {
 /// Ordem de producao. A combinacao codigo + identificador preserva a
 /// identidade externa do legado e permanece unica dentro do tenant.
 model OrdemProducao {
-  movimentos Movimento[]
-  idOrdemProducao String @id @default(uuid()) @map("id_ordem_producao") @db.Uuid
-  codigo         String
-  identificador String
-  itemCodigo     String @map("item_codigo")
-  itemDescricao  String? @map("item_descricao")
-  quantidadePlanejada Float @map("quantidade_planejada")
-  quantidadeProduzida Float @default(0) @map("quantidade_produzida")
-  quantidadeRefugo Float @default(0) @map("quantidade_refugo")
-  unidadeMedida TipoUnidadeMedida @default(UNIDADE) @map("unidade_medida")
-  status StatusOrdemProducao @default(LIBERADA)
-  origem OrigemOrdemProducao @default(OCTOPUS)
-  modoDistribuicao ModoDistribuicaoOrdem @default(PUXADA) @map("modo_distribuicao")
-  prioridade Int @default(999999)
-  prioridadeCodigoRedutor Int @default(999999) @map("prioridade_codigo_redutor")
-  sequencia Int @default(999999)
-  centroTrabalhoValido String? @map("centro_trabalho_valido")
-  cliente String?
-  pedido String?
-  observacoes String?
-  criadaEm DateTime @default(now()) @map("criada_em")
-  liberacaoEm DateTime? @map("liberacao_em")
-  inicioPlanejado DateTime? @map("inicio_planejado")
-  fimPlanejado DateTime? @map("fim_planejado")
-  encerraEm DateTime? @map("encerra_em")
+  movimentos              Movimento[]
+  etiquetas               Etiqueta[]
+  rastreabilidades        Rastreabilidade[]
+  idOrdemProducao         String                @id @default(uuid()) @map("id_ordem_producao") @db.Uuid
+  codigo                  String
+  identificador           String
+  itemCodigo              String                @map("item_codigo")
+  itemDescricao           String?               @map("item_descricao")
+  quantidadePlanejada     Float                 @map("quantidade_planejada")
+  quantidadeProduzida     Float                 @default(0) @map("quantidade_produzida")
+  quantidadeRefugo        Float                 @default(0) @map("quantidade_refugo")
+  unidadeMedida           TipoUnidadeMedida     @default(UNIDADE) @map("unidade_medida")
+  status                  StatusOrdemProducao   @default(LIBERADA)
+  origem                  OrigemOrdemProducao   @default(OCTOPUS)
+  modoDistribuicao        ModoDistribuicaoOrdem @default(PUXADA) @map("modo_distribuicao")
+  prioridade              Int                   @default(999999)
+  prioridadeCodigoRedutor Int                   @default(999999) @map("prioridade_codigo_redutor")
+  sequencia               Int                   @default(999999)
+  centroTrabalhoValido    String?               @map("centro_trabalho_valido")
+  cliente                 String?
+  pedido                  String?
+  observacoes             String?
+  criadaEm                DateTime              @default(now()) @map("criada_em")
+  liberacaoEm             DateTime?             @map("liberacao_em")
+  inicioPlanejado         DateTime?             @map("inicio_planejado")
+  fimPlanejado            DateTime?             @map("fim_planejado")
+  encerraEm               DateTime?             @map("encerra_em")
 
-  estabelecimentoId String @map("estabelecimento_id") @db.Uuid
-  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
-  centroTrabalhoId String? @map("centro_trabalho_id") @db.Uuid
-  centroTrabalho CentroTrabalho? @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho])
-  grupoMaquinaId String? @map("grupo_maquina_id") @db.Uuid
-  grupoMaquina GrupoMaquina? @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
-  planoProducaoId String? @map("plano_producao_id") @db.Uuid
-  planoProducao PlanoProducao? @relation(fields: [planoProducaoId], references: [idPlanoProducao])
-  ordemPaiId String? @map("ordem_pai_id") @db.Uuid
-  ordemPai OrdemProducao? @relation("OrdemPai", fields: [ordemPaiId], references: [idOrdemProducao])
-  ordensFilhas OrdemProducao[] @relation("OrdemPai")
-  ordemSequenciaId String? @map("ordem_sequencia_id") @db.Uuid
-  ordemSequencia OrdemProducao? @relation("OrdemSequencia", fields: [ordemSequenciaId], references: [idOrdemProducao])
+  estabelecimentoId  String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento    Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+  centroTrabalhoId   String?         @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho     CentroTrabalho? @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho])
+  grupoMaquinaId     String?         @map("grupo_maquina_id") @db.Uuid
+  grupoMaquina       GrupoMaquina?   @relation(fields: [grupoMaquinaId], references: [idGrupoMaquina])
+  planoProducaoId    String?         @map("plano_producao_id") @db.Uuid
+  planoProducao      PlanoProducao?  @relation(fields: [planoProducaoId], references: [idPlanoProducao])
+  ordemPaiId         String?         @map("ordem_pai_id") @db.Uuid
+  ordemPai           OrdemProducao?  @relation("OrdemPai", fields: [ordemPaiId], references: [idOrdemProducao])
+  ordensFilhas       OrdemProducao[] @relation("OrdemPai")
+  ordemSequenciaId   String?         @map("ordem_sequencia_id") @db.Uuid
+  ordemSequencia     OrdemProducao?  @relation("OrdemSequencia", fields: [ordemSequenciaId], references: [idOrdemProducao])
   ordensSequenciadas OrdemProducao[] @relation("OrdemSequencia")
   reservas           Reserva[]
 
-  criadoEm DateTime @default(now()) @map("criado_em")
+  criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   @@unique([codigo, identificador])
@@ -1162,10 +1312,12 @@ enum DiaSemana {
 /// enquanto o runtime somava 1 dia ao fim justamente para suportar esse caso.
 /// Mantivemos o comportamento do RUNTIME (o que a fábrica de fato usa).
 model Turno {
-  movimentos Movimento[]
-  idTurno   String @id @default(uuid()) @db.Uuid
-  codigo    String
-  descricao String
+  movimentos          Movimento[]
+  consumosFerramenta  ConsumoFerramenta[]
+  calculosIndicadores CalculoIndicadores[]
+  idTurno             String               @id @default(uuid()) @db.Uuid
+  codigo              String
+  descricao           String
 
   calendarioId String     @map("calendario_id") @db.Uuid
   calendario   Calendario @relation(fields: [calendarioId], references: [idCalendario], onDelete: Cascade)
@@ -1176,7 +1328,7 @@ model Turno {
 
   /// ex-TempoTotal / TempoDisponivel (TimeSpan) → minutos, unidade explícita.
   /// Invariantes do TurnoRN: nenhum pode ser zero e disponível <= total.
-  tempoTotalMinutos     Int @map("tempo_total_minutos")
+  tempoTotalMinutos      Int @map("tempo_total_minutos")
   tempoDisponivelMinutos Int @map("tempo_disponivel_minutos")
 
   /// Não pode ser vazio ("Selecione ao menos um dia da semana.").
@@ -1216,22 +1368,22 @@ enum StatusReserva {
 /// integração for migrada.
 model Reserva {
   movimentos Movimento[]
-  idReserva String @id @default(uuid()) @db.Uuid
+  idReserva  String      @id @default(uuid()) @db.Uuid
 
   ordemProducaoId String        @map("ordem_producao_id") @db.Uuid
   ordemProducao   OrdemProducao @relation(fields: [ordemProducaoId], references: [idOrdemProducao], onDelete: Cascade)
 
   /// >= 1 (ReservaRN: "A sequência da reserva não pode ser menor do que '1'").
-  sequencia Int
+  sequencia     Int
   itemCodigo    String  @map("item_codigo")
   itemDescricao String  @map("item_descricao")
   lote          String?
   unidadeMedida String? @map("unidade_medida")
 
   /// Todas >= 0 (ReservaRN valida as três separadamente).
-  quantidadeReserva    Decimal @default(0) @map("quantidade_reserva") @db.Decimal(18, 4)
+  quantidadeReserva     Decimal @default(0) @map("quantidade_reserva") @db.Decimal(18, 4)
   quantidadeRequisitada Decimal @default(0) @map("quantidade_requisitada") @db.Decimal(18, 4)
-  quantidadeDevolvida  Decimal @default(0) @map("quantidade_devolvida") @db.Decimal(18, 4)
+  quantidadeDevolvida   Decimal @default(0) @map("quantidade_devolvida") @db.Decimal(18, 4)
 
   /// ex-RequisicaoTerminal: a requisição partiu do chão de fábrica.
   requisicaoTerminal Boolean @default(false) @map("requisicao_terminal")
@@ -1286,8 +1438,12 @@ enum TipoMovimento {
 /// PENDENTES por dependência inexistente: `Ferramenta` (exigida pelo tipo
 /// TROCA_FERRAMENTAL) e `QualidadeItem`.
 model Movimento {
-  idMovimento String        @id @default(uuid()) @db.Uuid
-  tipo        TipoMovimento
+  idMovimento                  String                        @id @default(uuid()) @db.Uuid
+  movimentosFerramenta         MovimentoFerramenta[]
+  etiquetasGeradas             Etiqueta[]
+  rastreabilidades             Rastreabilidade[]
+  movimentosCalculoIndicadores MovimentoCalculoIndicadores[]
+  tipo                         TipoMovimento
 
   centroTrabalhoId String         @map("centro_trabalho_id") @db.Uuid
   centroTrabalho   CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
@@ -1313,10 +1469,10 @@ model Movimento {
   turno     Turno    @relation(fields: [turnoId], references: [idTurno])
   dataTurno DateTime @map("data_turno")
 
-  inicio DateTime
-  fim    DateTime?
+  inicio          DateTime
+  fim             DateTime?
   /// Derivado de (fim - inicio) quando fim > inicio. Segundos, unidade explícita.
-  duracaoSegundos Int? @map("duracao_segundos")
+  duracaoSegundos Int?      @map("duracao_segundos")
 
   /// Se este movimento entra no cálculo de OEE (vem do TipoParada/TipoRefugo).
   consideraOee Boolean @default(true) @map("considera_oee")
@@ -1341,20 +1497,20 @@ model Movimento {
   tipoRecusa   TipoRecusa? @relation(fields: [tipoRecusaId], references: [idTipoRecusa])
 
   /// Manutenção: solicitação → atendimento, com os tempos parciais.
-  tecnicoManutencao       String?   @map("tecnico_manutencao")
-  ordemManutencao         String?   @map("ordem_manutencao")
-  fimSolicitacao          DateTime? @map("fim_solicitacao")
-  tempoSolicitacaoSegundos Int?     @map("tempo_solicitacao_segundos")
-  fimManutencao           DateTime? @map("fim_manutencao")
-  tempoManutencaoSegundos Int?      @map("tempo_manutencao_segundos")
-  descricaoCausa          String?   @map("descricao_causa")
+  tecnicoManutencao        String?   @map("tecnico_manutencao")
+  ordemManutencao          String?   @map("ordem_manutencao")
+  fimSolicitacao           DateTime? @map("fim_solicitacao")
+  tempoSolicitacaoSegundos Int?      @map("tempo_solicitacao_segundos")
+  fimManutencao            DateTime? @map("fim_manutencao")
+  tempoManutencaoSegundos  Int?      @map("tempo_manutencao_segundos")
+  descricaoCausa           String?   @map("descricao_causa")
 
   /// Integração ERP. `dataIntegracao` preenchida trava cancelamento.
   reportaErp     Boolean   @default(false) @map("reporta_erp")
   dataIntegracao DateTime? @map("data_integracao")
 
-  cancelado             Boolean @default(false)
-  usuarioCancelamentoId String? @map("usuario_cancelamento_id") @db.Uuid
+  cancelado             Boolean  @default(false)
+  usuarioCancelamentoId String?  @map("usuario_cancelamento_id") @db.Uuid
   usuarioCancelamento   Usuario? @relation("MovimentosCancelados", fields: [usuarioCancelamentoId], references: [idUsuario])
   observacao            String?
 
@@ -1367,4 +1523,649 @@ model Movimento {
   @@index([ordemProducaoId])
   @@index([turnoId, dataTurno])
   @@map("movimentos")
+}
+
+// =============================================================================
+// EXTENSÃO IOT — Atualização de firmware OTA (ex-EnumTipoMsgIOT.UPDATE*)
+// =============================================================================
+
+/// ex-EnumStatusAtualizacao.
+enum StatusAtualizacaoFirmware {
+  SOLICITADA
+  INICIADA
+  CONCLUIDA
+  FALHOU
+}
+
+/// Binário de firmware enviado pelo admin (migrado de Octopus
+/// `firmwares/{model}/firmware.bin`, mas versionado — o legado sobrescrevia o
+/// único arquivo por modelo). O binário em si vive no MinIO/S3 do tenant
+/// (`chaveObjeto` é a key no bucket); esta linha guarda só os metadados.
+model FirmwareIot {
+  idFirmwareIot String @id @default(uuid()) @map("id_firmware_iot") @db.Uuid
+
+  /// ex-model: mesma família de hardware de DispositivoIot.modelo.
+  modelo  Int
+  versao  String
+  /// Key do objeto no bucket S3/MinIO — não é a URL pública (essa é montada
+  /// pela rota de download, que resolve o storage do tenant em runtime).
+  chaveObjeto  String @map("chave_objeto")
+  tamanhoBytes Int    @map("tamanho_bytes")
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  atualizacoes AtualizacaoFirmwareIot[]
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  // Duas versões iguais no mesmo modelo não fazem sentido — força escolher um
+  // número de versão novo a cada upload (paridade informal com o formato
+  // MAJOR.MINOR.PATCH que o firmware já reporta no REGISTER).
+  @@unique([estabelecimentoId, modelo, versao])
+  @@index([estabelecimentoId, modelo])
+  @@map("firmwares_iot")
+}
+
+/// Ciclo de atualização OTA de firmware (migrado de Octopus `AtualizacaoIOT`).
+/// Cada UPDATE do dispositivo promove o status; o worker que despacha holding
+/// a versão-target Coordena um ciclo por (dispositivo, versaoTarget).
+model AtualizacaoFirmwareIot {
+  idAtualizacaoFirmware String                    @id @default(uuid()) @map("id_atualizacao_firmware") @db.Uuid
+  dispositivoId         String                    @map("dispositivo_id") @db.Uuid
+  dispositivo           DispositivoIot            @relation(fields: [dispositivoId], references: [idDispositivoIot], onDelete: Cascade)
+  firmwareId            String                    @map("firmware_id") @db.Uuid
+  firmware              FirmwareIot               @relation(fields: [firmwareId], references: [idFirmwareIot], onDelete: Cascade)
+  versaoTarget          String                    @map("versao_target")
+  status                StatusAtualizacaoFirmware @default(SOLICITADA)
+  solicitadoEm          DateTime                  @default(now()) @map("solicitado_em")
+  iniciadoEm            DateTime?                 @map("iniciado_em")
+  concluidoEm           DateTime?                 @map("concluido_em")
+  mensagemErro          String?                   @map("mensagem_erro")
+  criadoEm              DateTime                  @default(now()) @map("criado_em")
+  atualizadoEm          DateTime                  @updatedAt @map("atualizado_em")
+
+  @@index([dispositivoId, status])
+  @@index([firmwareId])
+  @@map("atualizacoes_firmware_iot")
+}
+
+// =============================================================================
+// MÓDULO MANUFATURA — Ferramenta & Consumo (ex-CalculoConsumoFerramenta)
+// =============================================================================
+
+/// Ferramenta de manufatura (migrada de Octopus `Ferramenta`). Uma ferramenta
+/// tem vida útil contada em quantidades/tempos; o consumo de cada centro
+/// controla o momento da troca.
+model Ferramenta {
+  idFerramenta     String        @id @default(uuid()) @map("id_ferramenta") @db.Uuid
+  codigo           String
+  descricao        String
+  /// Vida útil esperada em unidades producingidas antes da troca.
+  vidaUtilUnidade  Decimal?      @map("vida_util_unidade") @db.Decimal(18, 4)
+  /// Vida útil esperada em tempo de máquina (segundos).
+  vidaUtilSegundos Int?          @map("vida_util_segundos")
+  status           StatusRecurso @default(ATIVO)
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  centrosTrabalho      CentroTrabalhoFerramenta[]
+  movimentosFerramenta MovimentoFerramenta[]
+  consumos             ConsumoFerramenta[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([estabelecimentoId, codigo])
+  @@index([estabelecimentoId])
+  @@map("ferramentas")
+}
+
+/// Vinculador CentroTrabalho ↔ Ferramenta (ex-CentroTrabalhoFerramenta). Cada
+/// centro declara quais ferramentas pode usar e o tempo nominal de troca.
+model CentroTrabalhoFerramenta {
+  idCentroTrabalhoFerramenta String @id @default(uuid()) @map("id_centro_trabalho_ferramenta") @db.Uuid
+
+  centroTrabalhoId String         @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho   CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+  ferramentaId     String         @map("ferramenta_id") @db.Uuid
+  ferramenta       Ferramenta     @relation(fields: [ferramentaId], references: [idFerramenta], onDelete: Cascade)
+
+  /// Tempo nominal de troca da ferramenta neste centro (segundos).
+  tempoTrocaSegundos Int @map("tempo_troca_segundos")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([centroTrabalhoId, ferramentaId])
+  @@index([ferramentaId])
+  @@map("centros_trabalho_ferramenta")
+}
+
+/// Movimento de ferramenta (migrado de Octopus `MovimentoFerramenta`). Cada
+/// TROCA_FERRAMENTAL registra; depois é consumido pelo `CalcularConsumoFerramenta`.
+model MovimentoFerramenta {
+  idMovimentoFerramenta String @id @default(uuid()) @map("id_movimento_ferramenta") @db.Uuid
+
+  ferramentaId String     @map("ferramenta_id") @db.Uuid
+  ferramenta   Ferramenta @relation(fields: [ferramentaId], references: [idFerramenta], onDelete: Cascade)
+
+  movimentoId String    @map("movimento_id") @db.Uuid
+  movimento   Movimento @relation(fields: [movimentoId], references: [idMovimento], onDelete: Cascade)
+
+  /// Qualidade produzida entre a troca anterior e esta.
+  quantidadeProduzida  Decimal @default(0) @map("quantidade_produzida") @db.Decimal(18, 4)
+  /// Tempo de máquina decorrido (segundos).
+  tempoMaquinaSegundos Int     @default(0) @map("tempo_maquina_segundos")
+
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  @@index([ferramentaId, criadoEm])
+  @@index([movimentoId])
+  @@map("movimentos_ferramenta")
+}
+
+/// Agregado de consumo de ferramenta por turno (migrado de `ConsumoFerramenta`).
+/// É o snapshot que o dashboard lê depois que o `CalcularConsumoFerramenta` passou.
+model ConsumoFerramenta {
+  idConsumoFerramenta String @id @default(uuid()) @map("id_consumo_ferramenta") @db.Uuid
+
+  ferramentaId String     @map("ferramenta_id") @db.Uuid
+  ferramenta   Ferramenta @relation(fields: [ferramentaId], references: [idFerramenta], onDelete: Cascade)
+
+  centroTrabalhoId String         @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho   CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+
+  turnoId   String   @map("turno_id") @db.Uuid
+  turno     Turno    @relation(fields: [turnoId], references: [idTurno], onDelete: Cascade)
+  /// Início do turno (paridade com CalculoIndicadores.diaTurno).
+  dataTurno DateTime @map("data_turno")
+
+  quantidadeProduzida      Decimal  @default(0) @map("quantidade_produzida") @db.Decimal(18, 4)
+  tempoMaquinaSegundos     Int      @default(0) @map("tempo_maquina_segundos")
+  /// Vida útil restante estimada em unidades.
+  vidaUtilRestanteUnidade  Decimal? @map("vida_util_restante_unidade") @db.Decimal(18, 4)
+  /// Vida útil restante em segundos.
+  vidaUtilRestanteSegundos Int?     @map("vida_util_restante_segundos")
+  recalcular               Boolean  @default(false)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([ferramentaId, centroTrabalhoId, turnoId, dataTurno])
+  @@index([ferramentaId, dataTurno])
+  @@map("consumos_ferramenta")
+}
+
+// =============================================================================
+// MÓDULO MANUFATURA — Etiqueta & Rastreabilidade (itens concluídos físicos)
+// =============================================================================
+
+/// ex-EnumStatusEtiqueta.
+enum StatusEtiqueta {
+  DISPONIVEL
+  UTILIZADA
+  CANCELADA
+  BAIXADA
+  ESTORNADA
+}
+
+/// ex-EnumMotivoGeracao.
+enum MotivoGeracaoEtiqueta {
+  REPORTE
+  REIMPRESSAO
+  CANCELAMENTO
+  MANUAL
+}
+
+/// Etiqueta física de manufatura (migrada de Octopus `Etiqueta`). Cada reporte
+/// gera uma etiqueta com `MotivoGeracao = REPORTE`; reimpressões usam
+/// `REIMPRESSAO`; estornos usam `CANCELAMENTO`. A integração ERP promove
+/// `Baixada` quando o cliente confirma a baixa via SOAP.
+model Etiqueta {
+  idEtiqueta String @id @default(uuid()) @map("id_etiqueta") @db.Uuid
+
+  /// Código de barras da etiqueta — único no tenant.
+  codigoBarras  String                @unique @map("codigo_barras")
+  /// Sequência numérica legível normalmente (sem dígitos verificadores).
+  sequencial    Int
+  motivoGeracao MotivoGeracaoEtiqueta @default(REPORTE) @map("motivo_geracao")
+  status        StatusEtiqueta        @default(DISPONIVEL)
+  quantidade    Decimal               @db.Decimal(18, 4)
+  unidadeMedida TipoUnidadeMedida     @default(UNIDADE) @map("unidade_medida")
+
+  ordemProducaoId String          @map("ordem_producao_id") @db.Uuid
+  ordemProducao   OrdemProducao   @relation(fields: [ordemProducaoId], references: [idOrdemProducao], onDelete: Cascade)
+  /// Movimento de reporte que gerou a etiqueta.
+  movimentoId     String?         @map("movimento_id") @db.Uuid
+  movimento       Movimento?      @relation(fields: [movimentoId], references: [idMovimento])
+  /// Template ZPL usado na impressão.
+  layoutId        String?         @map("layout_id") @db.Uuid
+  layout          LayoutEtiqueta? @relation(fields: [layoutId], references: [idLayout])
+
+  impressoEm DateTime? @map("impresso_em")
+  baixadoEm  DateTime? @map("baixado_em")
+
+  /// Quem solicitou (operador do terminal ou usuário do site).
+  usuarioId  String  @map("usuario_id") @db.Uuid
+  usuario    Usuario @relation("EtiquetasGeradas", fields: [usuarioId], references: [idUsuario])
+  observacao String?
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  rastreabilidades Rastreabilidade[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([ordemProducaoId])
+  @@index([estabelecimentoId, status])
+  @@index([codigoBarras])
+  @@map("etiquetas")
+}
+
+/// Rastreabilidade (migrada de Octopus `Rastreabilidade`). Liga etiqueta ↔
+/// ordem ↔ movimento ↔ item/lote/série com qtd. É o trilho que a integração
+/// ERP percorre para enviar ao cliente os itens que efetivamente produzidos.
+model Rastreabilidade {
+  idRastreabilidade String @id @default(uuid()) @map("id_rastreabilidade") @db.Uuid
+
+  etiquetaId String   @map("etiqueta_id") @db.Uuid
+  etiqueta   Etiqueta @relation(fields: [etiquetaId], references: [idEtiqueta], onDelete: Cascade)
+
+  ordemProducaoId String        @map("ordem_producao_id") @db.Uuid
+  ordemProducao   OrdemProducao @relation(fields: [ordemProducaoId], references: [idOrdemProducao], onDelete: Cascade)
+
+  /// Vínculo com a etiqueta: a FK é o `idEtiqueta` congenitamente, mas o
+  /// legado duplicava o movimento via FK `idMovimento`/`idMovimentoHistorico`.
+  movimentoId String?    @map("movimento_id") @db.Uuid
+  movimento   Movimento? @relation(fields: [movimentoId], references: [idMovimento])
+
+  itemCodigo    String  @map("item_codigo")
+  itemDescricao String? @map("item_descricao")
+  lote          String?
+  serie         String?
+
+  quantidadeProduzida Decimal @default(0) @map("quantidade_produzida") @db.Decimal(18, 4)
+  quantidadeRefugo    Decimal @default(0) @map("quantidade_refugo") @db.Decimal(18, 4)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([etiquetaId])
+  @@index([ordemProducaoId])
+  @@index([movimentoId])
+  @@map("rastreabilidades")
+}
+
+// =============================================================================
+// MÓDULO MANUFATURA — Históricos (migrados da thread MoverOrdensParaHistorico)
+// =============================================================================
+
+/// Movimento histórico (migrado de Octopus `MovimentosHistorico`). Mesma
+/// estrutura do `Movimento`, mas as FKs viram texto sem integridade — é o
+/// "mortuário" sem пожizar conjunto vivo. Tabelas paralelas preservam
+/// performance do chão de fábrica (queries sempre vivas).
+model MovimentoHistorico {
+  idMovimentoHistorico     String        @id @default(uuid()) @map("id_movimento_historico") @db.Uuid
+  /// FK original preservada como texto — o registro vivo foi descartado.
+  idMovimentoOriginal      String        @map("id_movimento_original") @db.Uuid
+  tipo                     TipoMovimento
+  centroTrabalhoId         String        @map("centro_trabalho_id") @db.Uuid
+  ordemProducaoId          String?       @map("ordem_producao_id") @db.Uuid
+  reservaId                String?       @map("reserva_id") @db.Uuid
+  usuarioId                String        @map("usuario_id") @db.Uuid
+  operador                 String
+  turnoId                  String        @map("turno_id") @db.Uuid
+  dataTurno                DateTime      @map("data_turno")
+  inicio                   DateTime
+  fim                      DateTime?
+  duracaoSegundos          Int?          @map("duracao_segundos")
+  consideraOee             Boolean       @default(true) @map("considera_oee")
+  quantidadeUnidade        Decimal?      @map("quantidade_unidade") @db.Decimal(18, 4)
+  quantidadeMetragem       Decimal?      @map("quantidade_metragem") @db.Decimal(18, 4)
+  quantidadePeso           Decimal?      @map("quantidade_peso") @db.Decimal(18, 4)
+  quantidadeArea           Decimal?      @map("quantidade_area") @db.Decimal(18, 4)
+  quantidadeVolume         Decimal?      @map("quantidade_volume") @db.Decimal(18, 4)
+  quantidadeEspecifica     Decimal?      @map("quantidade_especifica") @db.Decimal(18, 4)
+  tipoParadaId             String?       @map("tipo_parada_id") @db.Uuid
+  tipoRefugoId             String?       @map("tipo_refugo_id") @db.Uuid
+  tipoCausaId              String?       @map("tipo_causa_id") @db.Uuid
+  tipoRecusaId             String?       @map("tipo_recusa_id") @db.Uuid
+  tecnicoManutencao        String?       @map("tecnico_manutencao")
+  ordemManutencao          String?       @map("ordem_manutencao")
+  fimSolicitacao           DateTime?     @map("fim_solicitacao")
+  tempoSolicitacaoSegundos Int?          @map("tempo_solicitacao_segundos")
+  fimManutencao            DateTime?     @map("fim_manutencao")
+  tempoManutencaoSegundos  Int?          @map("tempo_manutencao_segundos")
+  descricaoCausa           String?       @map("descricao_causa")
+  reportaErp               Boolean       @default(false) @map("reporta_erp")
+  dataIntegracao           DateTime?     @map("data_integracao")
+  cancelado                Boolean       @default(false)
+  usuarioCancelamentoId    String?       @map("usuario_cancelamento_id") @db.Uuid
+  observacao               String?
+  criadoEm                 DateTime      @default(now()) @map("criado_em")
+  atualizadoEm             DateTime      @updatedAt @map("atualizado_em")
+
+  @@index([centroTrabalhoId, tipo, inicio])
+  @@index([ordemProducaoId])
+  @@index([turnoId, dataTurno])
+  @@map("movimentos_historico")
+}
+
+/// Ordem de produção histórica (migrada de Octopus `OrdemProducaoHistorico`).
+/// As FKs ORM (Reserva, Movimento, Etiqueta, Rastreabilidade) são migradas pelo
+/// `MoverOrdensParaHistoricoWorker` quando a ordem envelhece.
+model OrdemProducaoHistorico {
+  idOrdemProducaoHistorico           String                              @id @default(uuid()) @map("id_ordem_producao_historico") @db.Uuid
+  idOrdemProducaoOriginal            String                              @map("id_ordem_producao_original") @db.Uuid
+  codigo                             String
+  identificador                      String
+  itemCodigo                         String                              @map("item_codigo")
+  itemDescricao                      String?                             @map("item_descricao")
+  quantidadePlanejada                Float                               @map("quantidade_planejada")
+  quantidadeProduzida                Float                               @default(0) @map("quantidade_produzida")
+  quantidadeRefugo                   Float                               @default(0) @map("quantidade_refugo")
+  unidadeMedida                      TipoUnidadeMedida                   @default(UNIDADE) @map("unidade_medida")
+  status                             StatusOrdemProducao                 @default(LIBERADA)
+  origem                             OrigemOrdemProducao                 @default(OCTOPUS)
+  modoDistribuicao                   ModoDistribuicaoOrdem               @default(PUXADA) @map("modo_distribuicao")
+  prioridade                         Int                                 @default(999999)
+  prioridadeCodigoRedutor            Int                                 @default(999999) @map("prioridade_codigo_redutor")
+  sequencia                          Int                                 @default(999999)
+  centroTrabalhoValido               String?                             @map("centro_trabalho_valido")
+  cliente                            String?
+  pedido                             String?
+  observacoes                        String?
+  criadaEm                           DateTime                            @default(now()) @map("criada_em")
+  liberacaoEm                        DateTime?                           @map("liberacao_em")
+  inicioPlanejado                    DateTime?                           @map("inicio_planejado")
+  fimPlanejado                       DateTime?                           @map("fim_planejado")
+  encerraEm                          DateTime?                           @map("encerra_em")
+  estabelecimentoId                  String                              @map("estabelecimento_id") @db.Uuid
+  centroTrabalhoId                   String?                             @map("centro_trabalho_id") @db.Uuid
+  grupoMaquinaId                     String?                             @map("grupo_maquina_id") @db.Uuid
+  planoProducaoId                    String?                             @map("plano_producao_id") @db.Uuid
+  ordemPaiId                         String?                             @map("ordem_pai_id") @db.Uuid
+  ordemSequenciaId                   String?                             @map("ordem_sequencia_id") @db.Uuid
+  criadoEm                           DateTime                            @default(now()) @map("criado_em")
+  atualizadoEm                       DateTime                            @updatedAt @map("atualizado_em")
+  ordemProducaoApontamentoHistoricos OrdemProducaoApontamentoHistorico[]
+  reservaHistoricos                  ReservaHistorico[]
+  etiquetaHistoricos                 EtiquetaHistorico[]
+  rastreabilidadeHistoricos          RastreabilidadeHistorico[]
+
+  @@unique([codigo, identificador])
+  @@index([estabelecimentoId, status])
+  @@map("ordens_producao_historico")
+}
+
+/// Histórico de apontamentos da ordem (migrado de `OrdemProducaoApontamentoHistorico`).
+/// Mantém uma trilha de auditoria por apontamento, preservada na limpeza.
+model OrdemProducaoApontamentoHistorico {
+  idApontamentoHistorico   String                 @id @default(uuid()) @map("id_apontamento_historico") @db.Uuid
+  ordemProducaoHistoricoId String                 @map("ordem_producao_historico_id") @db.Uuid
+  ordemProducaoHistorico   OrdemProducaoHistorico @relation(fields: [ordemProducaoHistoricoId], references: [idOrdemProducaoHistorico], onDelete: Cascade)
+  movimentoHistoricoId     String?                @map("movimento_historico_id") @db.Uuid
+  /// Quem gerou o apontamento original: copiado do MovimentoHistorico.usuarioId.
+  usuarioId                String                 @map("usuario_id") @db.Uuid
+  observacao               String?
+  criadoEm                 DateTime               @default(now()) @map("criado_em")
+  atualizadoEm             DateTime               @updatedAt @map("atualizado_em")
+
+  @@index([ordemProducaoHistoricoId])
+  @@map("ordens_producao_apontamento_historico")
+}
+
+/// Reserva histórica (migrado de `ReservaHistorico`). O Reserva não é migrada
+/// por padrão no legado, mas hospedamos para preservar integridade de FKs.
+model ReservaHistorico {
+  idReservaHistorico       String                 @id @default(uuid()) @map("id_reserva_historico") @db.Uuid
+  idReservaOriginal        String                 @map("id_reserva_original") @db.Uuid
+  ordemProducaoHistoricoId String                 @map("ordem_producao_historico_id") @db.Uuid
+  ordemProducaoHistorico   OrdemProducaoHistorico @relation(fields: [ordemProducaoHistoricoId], references: [idOrdemProducaoHistorico], onDelete: Cascade)
+  sequencia                Int
+  itemCodigo               String                 @map("item_codigo")
+  itemDescricao            String                 @map("item_descricao")
+  lote                     String?
+  unidadeMedida            String?                @map("unidade_medida")
+  quantidadeReserva        Decimal                @default(0) @map("quantidade_reserva") @db.Decimal(18, 4)
+  quantidadeRequisitada    Decimal                @default(0) @map("quantidade_requisitada") @db.Decimal(18, 4)
+  quantidadeDevolvida      Decimal                @default(0) @map("quantidade_devolvida") @db.Decimal(18, 4)
+  requisicaoTerminal       Boolean                @default(false) @map("requisicao_terminal")
+  status                   StatusReserva          @default(NAO_REQUISITADA)
+  criadoEm                 DateTime               @default(now()) @map("criado_em")
+  atualizadoEm             DateTime               @updatedAt @map("atualizado_em")
+
+  @@index([ordemProducaoHistoricoId])
+  @@map("reservas_historico")
+}
+
+/// Etiqueta histórica (migrado de `EtiquetaHistorico`). Auto-explicada.
+model EtiquetaHistorico {
+  idEtiquetaHistorico       String                     @id @default(uuid()) @map("id_etiqueta_historico") @db.Uuid
+  idEtiquetaOriginal        String                     @map("id_etiqueta_original") @db.Uuid
+  ordemProducaoHistoricoId  String                     @map("ordem_producao_historico_id") @db.Uuid
+  ordemProducaoHistorico    OrdemProducaoHistorico     @relation(fields: [ordemProducaoHistoricoId], references: [idOrdemProducaoHistorico], onDelete: Cascade)
+  codigoBarras              String                     @unique @map("codigo_barras")
+  sequencial                Int
+  motivoGeracao             MotivoGeracaoEtiqueta      @default(REPORTE) @map("motivo_geracao")
+  status                    StatusEtiqueta             @default(DISPONIVEL)
+  quantidade                Decimal                    @db.Decimal(18, 4)
+  unidadeMedida             TipoUnidadeMedida          @default(UNIDADE) @map("unidade_medida")
+  impressoEm                DateTime?                  @map("impresso_em")
+  baixadoEm                 DateTime?                  @map("baixado_em")
+  usuarioId                 String                     @map("usuario_id") @db.Uuid
+  observacao                String?
+  criadoEm                  DateTime                   @default(now()) @map("criado_em")
+  atualizadoEm              DateTime                   @updatedAt @map("atualizado_em")
+  rastreabilidadeHistoricos RastreabilidadeHistorico[]
+
+  @@index([ordemProducaoHistoricoId])
+  @@map("etiquetas_historico")
+}
+
+model RastreabilidadeHistorico {
+  idRastreabilidadeHistorico String                 @id @default(uuid()) @map("id_rastreabilidade_historico") @db.Uuid
+  idRastreabilidadeOriginal  String                 @map("id_rastreabilidade_original") @db.Uuid
+  etiquetaHistoricoId        String                 @map("etiqueta_historico_id") @db.Uuid
+  etiquetaHistorico          EtiquetaHistorico      @relation(fields: [etiquetaHistoricoId], references: [idEtiquetaHistorico], onDelete: Cascade)
+  ordemProducaoHistoricoId   String                 @map("ordem_producao_historico_id") @db.Uuid
+  ordemProducaoHistorico     OrdemProducaoHistorico @relation(fields: [ordemProducaoHistoricoId], references: [idOrdemProducaoHistorico], onDelete: Cascade)
+  itemCodigo                 String                 @map("item_codigo")
+  itemDescricao              String?                @map("item_descricao")
+  lote                       String?
+  serie                      String?
+  quantidadeProduzida        Decimal                @default(0) @map("quantidade_produzida") @db.Decimal(18, 4)
+  quantidadeRefugo           Decimal                @default(0) @map("quantidade_refugo") @db.Decimal(18, 4)
+  criadoEm                   DateTime               @default(now()) @map("criado_em")
+  atualizadoEm               DateTime               @updatedAt @map("atualizado_em")
+
+  @@index([etiquetaHistoricoId])
+  @@index([ordemProducaoHistoricoId])
+  @@map("rastreabilidades_historico")
+}
+
+// =============================================================================
+// MÓDULO INDICADORES — Cálculo de OEE/TEEP (ex-CalculoIndicadoresRN)
+// =============================================================================
+
+/// Resultado do cálculo de OEE/Disponibilidade/Eficiência/Qualidade agregado
+/// por dia/turno/centro de trabalho. Linha-mãe do dashboard (`CalculoIndicadores`
+/// no legado). O `idTurno IS NULL` cão é a consolidação do dia.
+model CalculoIndicadores {
+  idCalculoIndicadores String @id @default(uuid()) @map("id_calculo_indicadores") @db.Uuid
+
+  /// Estabelecimento: implícito no CentroTrabalho, mas indexamos por
+  /// estabelecimento para filtros de painel sem join.
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  /// Centro de trabalho focado. NULL só no legado para consolidação de dia —
+  /// aqui o dia consolida-se como outra linha com `turnoId IS NULL`.
+  centroTrabalhoId String         @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho   CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+
+  /// Turno focado. NULL = consolidação do dia (paridade com AtualizarCalculoIndicadoresDia).
+  turnoId String? @map("turno_id") @db.Uuid
+  turno   Turno?  @relation(fields: [turnoId], references: [idTurno])
+
+  /// Dia (janela do turno) — sempre em UTC para queries de intervalo.
+  diaTurno DateTime @map("dia_turno")
+
+  /// Quantidades do agregado (paridade com `MontarPreCalculosOEE`).
+  qtdProduzida Float @default(0) @map("qtd_produzida")
+  qtdRefugo    Float @default(0) @map("qtd_refugo")
+  qtdPerda     Float @default(0) @map("qtd_perda")
+  qtdMeta      Float @default(0) @map("qtd_meta")
+
+  /// Tempos do agregado (segundos, unidade explícita).
+  tempoProducao   Int @default(0) @map("tempo_producao")
+  tempoParada     Int @default(0) @map("tempo_parada")
+  tempoPreparacao Int @default(0) @map("tempo_preparacao")
+  tempoDisponivel Int @default(0) @map("tempo_disponivel")
+  tempoTotal      Int @default(0) @map("tempo_total")
+  tempoManutencao Int @default(0) @map("tempo_manutencao")
+
+  /// Percentuais no intervalo [0..1] — ex-OEE/Disponibilidade/Eficiencia/Qualidade/TEEP.
+  /// No legado as colunas truncavam em 99999999; aqui o serviço fará o clamp.
+  disponibilidade Float @default(0)
+  eficiencia      Float @default(0)
+  qualidade       Float @default(0)
+  oee             Float @default(0)
+  teep            Float @default(0)
+
+  /// Perdas financeiras; custo de máquina-hora usado no cálculo.
+  perdaFinanceira  Float @default(0) @map("perda_financeira")
+  custoMaquinaHora Float @default(0) @map("custo_maquina_hora")
+
+  /// Pesta recalcular: usado quando o `ReintegrarMovimento` invalida um cálculo.
+  recalcular        Boolean  @default(false)
+  ultimaAtualizacao DateTime @default(now()) @map("ultima_atualizacao")
+
+  centrosTrabalhoOnline CentroTrabalhoOnline[]
+  movimentosCalculo     MovimentoCalculoIndicadores[]
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([centroTrabalhoId, turnoId, diaTurno])
+  @@index([estabelecimentoId, diaTurno])
+  @@index([centroTrabalhoId, diaTurno])
+  @@map("calculos_indicadores")
+}
+
+/// Detalhe por movimento do cálculo de OEE (migrado de `MovimentosCalculoIndicadores`).
+/// Cada `Movimento` que entrou no agregado deixa aqui a sua contribuição — tanto
+/// para auditoria quanto para o recálculo de um único agregado.
+model MovimentoCalculoIndicadores {
+  idMovimentoCalculoIndicadores String @id @default(uuid()) @map("id_movimento_calculo_indicadores") @db.Uuid
+
+  calculoIndicadoresId String             @map("calculo_indicadores_id") @db.Uuid
+  calculoIndicadores   CalculoIndicadores @relation(fields: [calculoIndicadoresId], references: [idCalculoIndicadores], onDelete: Cascade)
+
+  movimentoId String    @map("movimento_id") @db.Uuid
+  movimento   Movimento @relation(fields: [movimentoId], references: [idMovimento], onDelete: Cascade)
+
+  /// Quantidade do movimento na unidade do centro (paridade com `MovimentoFactory.GetQuantidadeMovimento`).
+  quantidade       Float
+  /// Tempo contribuído (segundos) — para Produção/Parada/Preparação.
+  tempoSegundos    Int           @map("tempo_segundos")
+  tipo             TipoMovimento
+  consideraOee     Boolean       @default(true) @map("considera_oee")
+  cicloPadraoOrdem Float         @default(0) @map("ciclo_padrao_ordem")
+  custoMaquinaHora Float         @default(0) @map("custo_maquina_hora")
+  recalcular       Boolean       @default(false)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@unique([calculoIndicadoresId, movimentoId])
+  @@index([movimentoId])
+  @@map("movimentos_calculo_indicadores")
+}
+
+// =============================================================================
+// MÓDULO MONITOR — CentroTrabalhoOnline + status realtime (snapshot)
+// =============================================================================
+
+/// ex-EnumStatusCentroTrabalhoOnline. Substitui os 8 inteiros do legado.
+enum StatusCentroTrabalhoOnline {
+  PRODUZINDO
+  PARADA
+  EM_SETUP
+  MANUTENCAO_SOLICITADA
+  MANUTENCAO_EM_ATENDIMENTO
+  OCIOSA
+  DESCONECTADA
+  BAIXO_DESEMPENHO
+}
+
+/// Snapshot em tempo real de cada centro de trabalho (migrado de
+/// `CentroTrabalhoOnline`). É a fonte dos painéis online do chão de fábrica:
+/// o `MonitorWorker` (loop 10s) atualiza uma linha por centro ativo.
+model CentroTrabalhoOnline {
+  idCentroTrabalhoOnline String         @id @default(uuid()) @map("id_centro_trabalho_online") @db.Uuid
+  centroTrabalhoId       String         @unique @map("centro_trabalho_id") @db.Uuid
+  centroTrabalho         CentroTrabalho @relation(fields: [centroTrabalhoId], references: [idCentroTrabalho], onDelete: Cascade)
+
+  /// Indicador agregado do turno corrente — o `MontarCentrosTrabalhoOnline`
+  /// resolve e anexa aqui (paridade com `CentroTrabalhoOnline.IdIndicador`).
+  calculoIndicadoresId String?             @map("calculo_indicadores_id") @db.Uuid
+  calculoIndicadores   CalculoIndicadores? @relation(fields: [calculoIndicadoresId], references: [idCalculoIndicadores])
+
+  status            StatusCentroTrabalhoOnline @default(DESCONECTADA)
+  /// Movimento aberto atual (reporte/parada/etc.).
+  movimentoAbertoId String?                    @map("movimento_aberto_id") @db.Uuid
+  /// Ordem aberta atual no centro.
+  ordemProducaoId   String?                    @map("ordem_producao_id") @db.Uuid
+  /// Timestamp da última atualização do snapshot — diferença com agora vira tempo-parado.
+  ultimaAtualizacao DateTime                   @default(now()) @map("ultima_atualizacao")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([centroTrabalhoId])
+  @@map("centros_trabalho_online")
+}
+
+// =============================================================================
+// MÓDULO NOTIFICAÇÕES — Entidade Notificacao (payload do motor de envio)
+// =============================================================================
+
+enum StatusNotificacao {
+  PENDENTE_ENVIO
+  ENVIADA
+  CANCELADA
+}
+
+/// Notificação agendada pelo motor regedo contra a `RegraNotificacao`. O UC
+/// `AvaliarRegrasNotificacao` gera linhas a partir das condições; o UC
+/// `EnviarNotificacoesPendentes` consome e-mail por SMTP (TenantSmtp).
+model Notificacao {
+  idNotificacao String @id @default(uuid()) @map("id_notificacao") @db.Uuid
+
+  regraId String           @map("regra_id") @db.Uuid
+  regra   RegraNotificacao @relation(fields: [regraId], references: [idRegraNotificacao], onDelete: Cascade)
+
+  destinatario String
+  /// Conteúdo derivado da regra/condição avaliada.
+  assunto      String
+  corpo        String
+  status       StatusNotificacao @default(PENDENTE_ENVIO)
+  agendadaPara DateTime          @map("agendada_para")
+  enviadaEm    DateTime?         @map("enviada_em")
+  mensagemErro String?           @map("mensagem_erro")
+
+  estabelecimentoId String          @map("estabelecimento_id") @db.Uuid
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [idEstabelecimento], onDelete: Cascade)
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@index([regraId, status])
+  @@index([estabelecimentoId, status, agendadaPara])
+  @@map("notificacoes")
 }

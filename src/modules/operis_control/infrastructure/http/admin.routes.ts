@@ -12,6 +12,8 @@ import type { ObterRabbitMqTenantUseCase } from '../../application/use-cases/obt
 import type { MonitorarBrokerTenantUseCase } from '../../application/use-cases/monitorar-broker-tenant.use-case.js';
 import type { ConfigurarSmtpTenantUseCase } from '../../application/use-cases/configurar-smtp-tenant.use-case.js';
 import type { ObterSmtpTenantUseCase } from '../../application/use-cases/obter-smtp-tenant.use-case.js';
+import type { ConfigurarMinioTenantUseCase } from '../../application/use-cases/configurar-minio-tenant.use-case.js';
+import type { ObterMinioTenantUseCase } from '../../application/use-cases/obter-minio-tenant.use-case.js';
 import { autenticarSuperAdmin } from './autenticacao-admin.js';
 
 const loginBody = z.object({
@@ -66,6 +68,17 @@ const configurarSmtpBody = z.object({
   sslHabilitado: z.boolean().optional(),
 });
 
+/** Config do object storage MinIO do tenant. `secretKey` é texto puro só em trânsito. */
+const configurarMinioBody = z.object({
+  host: z.string().min(1),
+  porta: z.number().int().min(1).max(65535),
+  bucket: z.string().min(1),
+  accessKey: z.string().min(1),
+  secretKey: z.string().min(1),
+  sslHabilitado: z.boolean().optional(),
+  pathStyleAccess: z.boolean().optional(),
+});
+
 const VALIDADE_TOKEN = '8h';
 
 export interface AdminRoutesDeps {
@@ -80,6 +93,8 @@ export interface AdminRoutesDeps {
   monitorarBrokerTenant: MonitorarBrokerTenantUseCase;
   configurarSmtpTenant: ConfigurarSmtpTenantUseCase;
   obterSmtpTenant: ObterSmtpTenantUseCase;
+  configurarMinioTenant: ConfigurarMinioTenantUseCase;
+  obterMinioTenant: ObterMinioTenantUseCase;
 }
 
 /**
@@ -270,6 +285,45 @@ export function adminRoutes(deps: AdminRoutesDeps) {
       },
       async (request, reply) => {
         const dto = await deps.obterSmtpTenant.executar(request.params.id);
+        return reply.status(200).send(dto);
+      },
+    );
+
+    // ── Configuração MinIO do tenant (object storage; secret cifrado) ──
+    app.put(
+      '/admin/tenants/:id/minio',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Cadastra/atualiza o object storage MinIO do tenant (secret cifrado)',
+          security: segurancaAdmin,
+          params: tenantParams,
+          body: configurarMinioBody,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.configurarMinioTenant.executar({
+          tenantId: request.params.id,
+          ...request.body,
+        });
+        return reply.status(200).send(dto);
+      },
+    );
+
+    app.get(
+      '/admin/tenants/:id/minio',
+      {
+        preHandler: [autenticarSuperAdmin],
+        schema: {
+          tags: ['admin'],
+          summary: 'Obtém a config MinIO do tenant (sem o secret)',
+          security: segurancaAdmin,
+          params: tenantParams,
+        },
+      },
+      async (request, reply) => {
+        const dto = await deps.obterMinioTenant.executar(request.params.id);
         return reply.status(200).send(dto);
       },
     );

@@ -28,7 +28,7 @@ export interface DispositivoIotDTO {
   modelo: number;
   versaoFirmware: string | null;
   ip: string | null;
-  centroTrabalho: string | null;
+  centroTrabalhoId: string | null;
   /**
    * Derivado do broker no momento da consulta — não é estado persistido.
    * `false` também quando o broker está inacessível.
@@ -65,7 +65,7 @@ export function paraDispositivoIotDTO(
     modelo: dispositivo.modelo,
     versaoFirmware: dispositivo.versaoFirmware,
     ip: dispositivo.ip,
-    centroTrabalho: dispositivo.centroTrabalho,
+    centroTrabalhoId: dispositivo.centroTrabalhoId,
     online,
     entradas: dispositivo.entradas.map(paraEntradaDTO),
   };

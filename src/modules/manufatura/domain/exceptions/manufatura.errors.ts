@@ -127,6 +127,70 @@ export class GrupoMaquinaEmUsoError extends AppError {
   }
 }
 
+export class QualidadeItemNaoEncontradaError extends AppError {
+  readonly code = 'QUALIDADE_ITEM_NAO_ENCONTRADA';
+  readonly httpStatus = 404;
+
+  constructor(identificador: string) {
+    super(`Qualidade do item '${identificador}' não cadastrada.`);
+  }
+}
+
+export class DescricaoQualidadeItemJaExisteError extends AppError {
+  readonly code = 'DESCRICAO_QUALIDADE_ITEM_JA_EXISTE';
+  readonly httpStatus = 409;
+
+  constructor(descricao: string) {
+    super(`Qualidade do item com a descrição '${descricao}' já cadastrada.`);
+  }
+}
+
+export class ItemNaoEncontradoError extends AppError {
+  readonly code = 'ITEM_NAO_ENCONTRADO';
+  readonly httpStatus = 404;
+
+  constructor(identificador: string) {
+    super(`Código item '${identificador}' não cadastrado.`);
+  }
+}
+
+export class CodigoItemJaExisteError extends AppError {
+  readonly code = 'CODIGO_ITEM_JA_EXISTE';
+  readonly httpStatus = 409;
+
+  constructor(codigo: string) {
+    super(`Item com o código '${codigo}' já cadastrado.`);
+  }
+}
+
+export class QualidadeItemInvalidaError extends AppError {
+  readonly code = 'QUALIDADE_ITEM_INVALIDA';
+  readonly httpStatus = 422;
+
+  constructor(id: string) {
+    super(`Qualidade do item '${id}' não está cadastrada neste estabelecimento.`);
+  }
+}
+
+export class CentroTrabalhoItemNaoEncontradoError extends AppError {
+  readonly code = 'CENTRO_TRABALHO_ITEM_NAO_ENCONTRADO';
+  readonly httpStatus = 404;
+
+  constructor(identificador: string) {
+    super(`Vínculo item/centro de trabalho '${identificador}' não encontrado.`);
+  }
+}
+
+/** Paridade com CentroTrabalhoItemRN: "Item e Centro de Trabalho já relacionados." */
+export class ItemCentroTrabalhoJaRelacionadosError extends AppError {
+  readonly code = 'ITEM_CENTRO_TRABALHO_JA_RELACIONADOS';
+  readonly httpStatus = 409;
+
+  constructor() {
+    super('Item e Centro de Trabalho já relacionados.');
+  }
+}
+
 export class CentroTrabalhoNaoEncontradoError extends AppError {
   readonly code = 'CENTRO_TRABALHO_NAO_ENCONTRADO';
   readonly httpStatus = 404;

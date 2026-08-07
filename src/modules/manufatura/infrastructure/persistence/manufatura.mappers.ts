@@ -4,6 +4,7 @@ import type {
   GrupoMaquina as GrupoMaquinaRow,
   Turno as TurnoRow,
   Reserva as ReservaRow,
+  QualidadeItem as QualidadeItemRow,
   Prisma,
 } from '@prisma/client';
 import { Calendario } from '../../domain/entities/calendario.js';
@@ -11,6 +12,9 @@ import { GrupoMaquina } from '../../domain/entities/grupo-maquina.js';
 import { CentroTrabalho } from '../../domain/entities/centro-trabalho.js';
 import { Turno } from '../../domain/entities/turno.js';
 import { Reserva } from '../../domain/entities/reserva.js';
+import { QualidadeItem } from '../../domain/entities/qualidade-item.js';
+import { Item } from '../../domain/entities/item.js';
+import { CentroTrabalhoItem } from '../../domain/entities/centro-trabalho-item.js';
 
 /**
  * Tradução linha↔entidade. Sempre `restaurar` (não `criar`): a linha já
@@ -75,6 +79,99 @@ export const GrupoMaquinaMapper = {
       estabelecimentoId: grupo.estabelecimentoId,
       criadoEm: grupo.criadoEm,
       atualizadoEm: grupo.atualizadoEm,
+    };
+  },
+};
+
+export const QualidadeItemMapper = {
+  paraDominio(row: QualidadeItemRow): QualidadeItem {
+    return QualidadeItem.restaurar({
+      idQualidadeItem: row.idQualidadeItem,
+      descricao: row.descricao,
+      estabelecimentoId: row.estabelecimentoId,
+      criadoEm: row.criadoEm,
+      atualizadoEm: row.atualizadoEm,
+    });
+  },
+
+  paraPersistencia(qualidade: QualidadeItem) {
+    return {
+      idQualidadeItem: qualidade.idQualidadeItem,
+      descricao: qualidade.descricao,
+      estabelecimentoId: qualidade.estabelecimentoId,
+      criadoEm: qualidade.criadoEm,
+      atualizadoEm: qualidade.atualizadoEm,
+    };
+  },
+};
+
+type ItemRow = Prisma.ItemGetPayload<{ include: { qualidades: { select: { qualidadeItemId: true } } } }>;
+
+export const ItemMapper = {
+  paraDominio(row: ItemRow): Item {
+    return Item.restaurar({
+      idItem: row.idItem,
+      codigo: row.codigo,
+      descricao: row.descricao,
+      status: row.status,
+      estabelecimentoId: row.estabelecimentoId,
+      qualidadeItemIds: new Set(row.qualidades.map((q) => q.qualidadeItemId)),
+      criadoEm: row.criadoEm,
+      atualizadoEm: row.atualizadoEm,
+    });
+  },
+
+  paraPersistencia(item: Item) {
+    return {
+      idItem: item.idItem,
+      codigo: item.codigo,
+      descricao: item.descricao,
+      status: item.status,
+      estabelecimentoId: item.estabelecimentoId,
+      criadoEm: item.criadoEm,
+      atualizadoEm: item.atualizadoEm,
+    };
+  },
+};
+
+export const CentroTrabalhoItemMapper = {
+  paraDominio(row: Prisma.CentroTrabalhoItemGetPayload<object>): CentroTrabalhoItem {
+    return CentroTrabalhoItem.restaurar({
+      idCentroTrabalhoItem: row.idCentroTrabalhoItem,
+      itemId: row.itemId,
+      centroTrabalhoId: row.centroTrabalhoId,
+      cicloProdutivoHora: numeroOuNulo(row.cicloProdutivoHora),
+      cicloProdutivoPecaSegundos: row.cicloProdutivoPecaSegundos,
+      tempoPreparacaoSegundos: row.tempoPreparacaoSegundos,
+      fatorRefugo: numeroOuNulo(row.fatorRefugo),
+      qtdRefugo: numeroOuNulo(row.qtdRefugo),
+      qtdPerda: numeroOuNulo(row.qtdPerda),
+      apontarPreparacao: numeroOuNulo(row.apontarPreparacao),
+      tempoMaquinaSegundos: row.tempoMaquinaSegundos,
+      loteMultiplo: numeroOuNulo(row.loteMultiplo),
+      ativo: row.ativo,
+      criadoEm: row.criadoEm,
+      atualizadoEm: row.atualizadoEm,
+    });
+  },
+
+  paraPersistencia(vinculo: CentroTrabalhoItem) {
+    return {
+      idCentroTrabalhoItem: vinculo.idCentroTrabalhoItem,
+      itemId: vinculo.itemId,
+      centroTrabalhoId: vinculo.centroTrabalhoId,
+      cicloProdutivoHora: vinculo.cicloProdutivoHora,
+      cicloProdutivoPecaSegundos: vinculo.cicloProdutivoPecaSegundos,
+      tempoPreparacaoSegundos: vinculo.tempoPreparacaoSegundos,
+      fatorRefugo: vinculo.fatorRefugo,
+      qtdRefugo: vinculo.qtdRefugo,
+      qtdPerda: vinculo.qtdPerda,
+      apontarPreparacao: vinculo.apontarPreparacao,
+      tempoMaquinaSegundos: vinculo.tempoMaquinaSegundos,
+      loteMultiplo: vinculo.loteMultiplo,
+      ativo: vinculo.ativo,
+      criadoEm: vinculo.criadoEm,
+      atualizadoEm: vinculo.atualizadoEm,
     };
   },
 };

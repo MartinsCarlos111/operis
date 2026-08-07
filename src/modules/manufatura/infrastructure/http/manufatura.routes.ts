@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import ExcelJS from 'exceljs';
 import { StatusRecurso } from '@shared/domain/status-recurso.js';
 import type {
   BuscarCalendarioUseCase,
@@ -16,7 +15,26 @@ import type {
   ExcluirGrupoMaquinaUseCase,
   ListarCalendariosUseCase,
   ListarGruposMaquinaUseCase,
+  BuscarQualidadeItemUseCase,
+  CriarQualidadeItemUseCase,
+  EditarQualidadeItemUseCase,
+  ExcluirQualidadeItemUseCase,
+  ListarQualidadesItemUseCase,
 } from '../../application/use-cases/cadastros-apoio.use-cases.js';
+import type {
+  BuscarItemUseCase,
+  CriarItemUseCase,
+  EditarItemUseCase,
+  ExcluirItemUseCase,
+  ListarItensUseCase,
+} from '../../application/use-cases/item.use-cases.js';
+import type {
+  BuscarCentroTrabalhoItemUseCase,
+  CriarCentroTrabalhoItemUseCase,
+  EditarCentroTrabalhoItemUseCase,
+  ExcluirCentroTrabalhoItemUseCase,
+  ListarCentrosTrabalhoItensUseCase,
+} from '../../application/use-cases/centro-trabalho-item.use-cases.js';
 import type {
   BuscarCentroTrabalhoUseCase,
   CriarCentroTrabalhoUseCase,
@@ -50,6 +68,25 @@ import type {
   RegistrarMovimentoUseCase,
   ReintegrarMovimentoUseCase,
 } from '../../application/use-cases/movimento.use-cases.js';
+import type {
+  BaixarOrdensProducaoUseCase,
+  CancelarOrdensProducaoUseCase,
+  IniciarOrdemProducaoUseCase,
+  LiberarOrdensProducaoUseCase,
+} from '../../application/use-cases/ordem-producao-ciclo-vida.use-cases.js';
+import type {
+  BuscarEtiquetaUseCase,
+  CancelarEtiquetaUseCase,
+  ImprimirEtiquetaUseCase,
+  ListarEtiquetasUseCase,
+  ListarRastreabilidadesUseCase,
+} from '../../application/use-cases/etiqueta.use-cases.js';
+import type {
+  CriarFerramentaUseCase,
+  EditarFerramentaUseCase,
+  ExcluirFerramentaUseCase,
+  ListarFerramentasUseCase,
+} from '../../application/use-cases/ferramenta.use-cases.js';
 
 
 const statusSchema = z.nativeEnum(StatusRecurso);
@@ -171,6 +208,43 @@ const cancelarMovimentoBody = z.object({
   usuarioCancelamentoId: z.string().uuid().optional(),
 });
 
+const qualidadeItemBody = z.object({
+  descricao: z.string().min(1),
+});
+
+const itemBody = z.object({
+  codigo: z.string().min(1),
+  descricao: z.string().min(1),
+  status: statusSchema.optional(),
+  qualidadeItemIds: z.array(z.string().uuid()).optional(),
+});
+
+const atributosCentroTrabalhoItem = {
+  cicloProdutivoHora: z.number().min(0).nullable().optional(),
+  cicloProdutivoPecaSegundos: z.number().int().min(0).nullable().optional(),
+  tempoPreparacaoSegundos: z.number().int().min(0).nullable().optional(),
+  fatorRefugo: z.number().min(0).nullable().optional(),
+  qtdRefugo: z.number().min(0).nullable().optional(),
+  qtdPerda: z.number().min(0).nullable().optional(),
+  apontarPreparacao: z.number().min(0).nullable().optional(),
+  tempoMaquinaSegundos: z.number().int().min(0).nullable().optional(),
+  loteMultiplo: z.number().min(0).nullable().optional(),
+  ativo: z.boolean().optional(),
+};
+
+const centroTrabalhoItemBody = z.object({
+  itemId: z.string().uuid(),
+  centroTrabalhoId: z.string().uuid(),
+  ...atributosCentroTrabalhoItem,
+});
+
+const editarCentroTrabalhoItemBody = z.object(atributosCentroTrabalhoItem);
+
+const listarCentrosTrabalhoItensQuery = listarQuery.extend({
+  itemId: z.string().uuid().optional(),
+  centroTrabalhoId: z.string().uuid().optional(),
+});
+
 const grupoMaquinaBody = z.object({
   codigo: z.string().min(1),
   descricao: z.string().min(1),
@@ -245,6 +319,12 @@ const ordemProducaoBody = z.object({
   ordemPaiId: z.string().uuid().nullable().optional(),
   ordemSequenciaId: z.string().uuid().nullable().optional(),
 });
+const idsOrdensProducaoBody = z.object({
+  idsOrdensProducao: z.array(z.string().uuid()).min(1, 'Informe ao menos uma ordem.'),
+});
+const cancelarOrdensProducaoBody = idsOrdensProducaoBody.extend({
+  motivo: z.string().trim().min(1).optional(),
+});
 const planoProducaoBody = z.object({
   codigo: z.string().min(1), descricao: z.string().min(1), itemCodigo: z.string().min(1),
   itemDescricao: z.string().nullable().optional(), quantidade: z.number().positive(),
@@ -252,36 +332,6 @@ const planoProducaoBody = z.object({
   centroTrabalhoId: z.string().uuid().nullable().optional(), grupoMaquinaId: z.string().uuid().nullable().optional(),
   inicioPlanejado: z.string().datetime().nullable().optional(), fimPlanejado: z.string().datetime().nullable().optional(),
 });
-const artigoBody = z.object({ codigo: z.string().trim().min(1), descricao: z.string().trim().min(1), qualidades: z.string().nullable().optional(), status: statusSchema.optional() });
-const artigoCentroBody = z.object({
-  artigoId: z.string().uuid(), centroTrabalhoId: z.string().uuid(),
-  cicloProdutivoHora: z.number().min(0).optional(), cicloProdutivoPecaSegundos: z.number().min(0).optional(),
-  tempoPreparacaoSegundos: z.number().min(0).optional(), fatorRefugo: z.number().min(0).optional(),
-  quantidadeRefugo: z.number().min(0).optional(), quantidadePerda: z.number().min(0).optional(),
-  apontarPreparacao: z.number().min(0).optional(), tempoMaquinaSegundos: z.number().min(0).optional(),
-  loteMultiplo: z.number().min(0).optional(), ativo: z.boolean().optional(),
-});
-const cicloQuery = listarQuery.extend({
-  artigoCodigo: z.string().trim().min(1).optional(),
-  centroCodigo: z.string().trim().min(1).optional(),
-  ativo: z.enum(['true', 'false']).optional(),
-});
-const configuracaoCamposQuery = z.object({ tela: z.string().trim().min(1) });
-const configuracaoCamposBody = z.object({
-  tela: z.string().trim().min(1),
-  campos: z.array(z.object({ campo: z.string().trim().min(1), visivel: z.boolean(), ordem: z.number().int().min(0) })),
-});
-const importacaoXlsxBody = z.object({ arquivoBase64: z.string().min(1) });
-const PERMISSOES_ARTIGOS = {
-  acesso: 'manufatura:artigos-ciclos:acesso',
-  adicionar: 'manufatura:artigos-ciclos:adicionar',
-  editar: 'manufatura:artigos-ciclos:editar',
-  excluir: 'manufatura:artigos-ciclos:excluir',
-  importar: 'manufatura:artigos-ciclos:importar',
-  exportar: 'manufatura:artigos-ciclos:exportar',
-  configuracao: 'manufatura:artigos-ciclos:configuracao-campos',
-} as const;
-const CAMPOS_ARTIGOS_CICLOS = ['artigo', 'centro', 'hora', 'peca', 'preparacao', 'maquina', 'ativo'] as const;
 
 export interface ManufaturaUseCases {
   criarCalendario: CriarCalendarioUseCase;
@@ -295,6 +345,24 @@ export interface ManufaturaUseCases {
   excluirGrupoMaquina: ExcluirGrupoMaquinaUseCase;
   buscarGrupoMaquina: BuscarGrupoMaquinaUseCase;
   listarGruposMaquina: ListarGruposMaquinaUseCase;
+
+  criarQualidadeItem: CriarQualidadeItemUseCase;
+  editarQualidadeItem: EditarQualidadeItemUseCase;
+  excluirQualidadeItem: ExcluirQualidadeItemUseCase;
+  buscarQualidadeItem: BuscarQualidadeItemUseCase;
+  listarQualidadesItem: ListarQualidadesItemUseCase;
+
+  criarItem: CriarItemUseCase;
+  editarItem: EditarItemUseCase;
+  excluirItem: ExcluirItemUseCase;
+  buscarItem: BuscarItemUseCase;
+  listarItens: ListarItensUseCase;
+
+  criarCentroTrabalhoItem: CriarCentroTrabalhoItemUseCase;
+  editarCentroTrabalhoItem: EditarCentroTrabalhoItemUseCase;
+  excluirCentroTrabalhoItem: ExcluirCentroTrabalhoItemUseCase;
+  buscarCentroTrabalhoItem: BuscarCentroTrabalhoItemUseCase;
+  listarCentrosTrabalhoItens: ListarCentrosTrabalhoItensUseCase;
 
   criarCentroTrabalho: CriarCentroTrabalhoUseCase;
   editarCentroTrabalho: EditarCentroTrabalhoUseCase;
@@ -322,6 +390,25 @@ export interface ManufaturaUseCases {
   reintegrarMovimento: ReintegrarMovimentoUseCase;
   buscarMovimento: BuscarMovimentoUseCase;
   listarMovimentos: ListarMovimentosUseCase;
+
+  // Ciclo de vida da Ordem de Produção (ex-OrdensProducaoController lib/canc/baix/reexec/devolver).
+  liberarOrdensProducao: LiberarOrdensProducaoUseCase;
+  cancelarOrdensProducao: CancelarOrdensProducaoUseCase;
+  baixarOrdensProducao: BaixarOrdensProducaoUseCase;
+  iniciarOrdemProducao: IniciarOrdemProducaoUseCase;
+
+  // Etiqueta + Rastreabilidade (itens concluídos físicos)
+  imprimirEtiqueta: ImprimirEtiquetaUseCase;
+  cancelarEtiqueta: CancelarEtiquetaUseCase;
+  buscarEtiqueta: BuscarEtiquetaUseCase;
+  listarEtiquetas: ListarEtiquetasUseCase;
+  listarRastreabilidades: ListarRastreabilidadesUseCase;
+
+  // Ferramenta
+  criarFerramenta: CriarFerramentaUseCase;
+  editarFerramenta: EditarFerramentaUseCase;
+  excluirFerramenta: ExcluirFerramentaUseCase;
+  listarFerramentas: ListarFerramentasUseCase;
 }
 
 export interface ManufaturaRoutesDeps {
@@ -569,6 +656,342 @@ export function manufaturaRoutes(deps: ManufaturaRoutesDeps) {
       },
     );
 
+    // ---------------------------------------------------------- Qualidades do item
+    app.get(
+      '/manufatura/qualidades-item',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:list')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Lista as qualidades de item do estabelecimento ativo (paginado)',
+          security: seguranca,
+          querystring: listarQuery,
+        },
+      },
+      async (request, reply) => {
+        const { listarQualidadesItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await listarQualidadesItem.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.query,
+          }),
+        );
+      },
+    );
+
+    app.get(
+      '/manufatura/qualidades-item/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:list')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Busca uma qualidade de item por id',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { buscarQualidadeItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await buscarQualidadeItem.executar({
+            idQualidadeItem: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+          }),
+        );
+      },
+    );
+
+    app.post(
+      '/manufatura/qualidades-item',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:create')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Cria uma qualidade de item',
+          security: seguranca,
+          body: qualidadeItemBody,
+        },
+      },
+      async (request, reply) => {
+        const { criarQualidadeItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(201).send(
+          await criarQualidadeItem.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.put(
+      '/manufatura/qualidades-item/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:update')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Edita uma qualidade de item',
+          security: seguranca,
+          params: idParam,
+          body: qualidadeItemBody,
+        },
+      },
+      async (request, reply) => {
+        const { editarQualidadeItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await editarQualidadeItem.executar({
+            idQualidadeItem: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.delete(
+      '/manufatura/qualidades-item/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:delete')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Exclui uma qualidade de item',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { excluirQualidadeItem } = deps.montarUseCases(request.prismaTenant);
+        await excluirQualidadeItem.executar({
+          idQualidadeItem: request.params.id,
+          estabelecimentoId: request.estabelecimentoId,
+        });
+        return reply.status(204).send();
+      },
+    );
+
+    // ---------------------------------------------------------------------- Itens
+    app.get(
+      '/manufatura/itens',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:list')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Lista os itens do estabelecimento ativo (paginado)',
+          security: seguranca,
+          querystring: listarQuery,
+        },
+      },
+      async (request, reply) => {
+        const { listarItens } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await listarItens.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.query,
+          }),
+        );
+      },
+    );
+
+    app.get(
+      '/manufatura/itens/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:list')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Busca um item por id',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { buscarItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await buscarItem.executar({
+            idItem: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+          }),
+        );
+      },
+    );
+
+    app.post(
+      '/manufatura/itens',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:create')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Cria um item, com as qualidades vinculadas',
+          security: seguranca,
+          body: itemBody,
+        },
+      },
+      async (request, reply) => {
+        const { criarItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(201).send(
+          await criarItem.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.put(
+      '/manufatura/itens/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:update')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Edita um item, substituindo as qualidades vinculadas',
+          security: seguranca,
+          params: idParam,
+          body: itemBody,
+        },
+      },
+      async (request, reply) => {
+        const { editarItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await editarItem.executar({
+            idItem: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.delete(
+      '/manufatura/itens/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:delete')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Exclui um item',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { excluirItem } = deps.montarUseCases(request.prismaTenant);
+        await excluirItem.executar({
+          idItem: request.params.id,
+          estabelecimentoId: request.estabelecimentoId,
+        });
+        return reply.status(204).send();
+      },
+    );
+
+    // -------------------------------------------------- Item x Centro de Trabalho
+    app.get(
+      '/manufatura/centros-trabalho-itens',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:list')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Lista os vínculos Item x Centro de Trabalho (filtros opcionais por item/centro)',
+          security: seguranca,
+          querystring: listarCentrosTrabalhoItensQuery,
+        },
+      },
+      async (request, reply) => {
+        const { listarCentrosTrabalhoItens } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await listarCentrosTrabalhoItens.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.query,
+          }),
+        );
+      },
+    );
+
+    app.get(
+      '/manufatura/centros-trabalho-itens/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:list')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Busca um vínculo Item x Centro de Trabalho por id',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { buscarCentroTrabalhoItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await buscarCentroTrabalhoItem.executar({
+            idCentroTrabalhoItem: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+          }),
+        );
+      },
+    );
+
+    app.post(
+      '/manufatura/centros-trabalho-itens',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:create')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Vincula um item a um centro de trabalho (par único; recusa se já relacionados)',
+          security: seguranca,
+          body: centroTrabalhoItemBody,
+        },
+      },
+      async (request, reply) => {
+        const { criarCentroTrabalhoItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(201).send(
+          await criarCentroTrabalhoItem.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.put(
+      '/manufatura/centros-trabalho-itens/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:update')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Edita os atributos do vínculo (item e centro de trabalho não são alteráveis)',
+          security: seguranca,
+          params: idParam,
+          body: editarCentroTrabalhoItemBody,
+        },
+      },
+      async (request, reply) => {
+        const { editarCentroTrabalhoItem } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await editarCentroTrabalhoItem.executar({
+            idCentroTrabalhoItem: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.delete(
+      '/manufatura/centros-trabalho-itens/:id',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:delete')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Exclui um vínculo Item x Centro de Trabalho',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { excluirCentroTrabalhoItem } = deps.montarUseCases(request.prismaTenant);
+        await excluirCentroTrabalhoItem.executar({
+          idCentroTrabalhoItem: request.params.id,
+          estabelecimentoId: request.estabelecimentoId,
+        });
+        return reply.status(204).send();
+      },
+    );
+
     // ------------------------------------------------------ Centros de trabalho
     app.get(
       '/manufatura/centros-trabalho',
@@ -682,124 +1105,6 @@ export function manufaturaRoutes(deps: ManufaturaRoutesDeps) {
     );
 
     // --------------------------------------------------------- Ordens de producao
-    // --------------------------------------------------------- Artigos e ciclos por centro
-    app.get('/manufatura/artigos', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.acesso)], schema: { tags: ['manufatura'], security: seguranca, querystring: listarQuery } }, async (request, reply) => {
-      const where = { estabelecimentoId: request.estabelecimentoId, ...(request.query.termo ? { OR: [{ codigo: { contains: request.query.termo, mode: 'insensitive' as const } }, { descricao: { contains: request.query.termo, mode: 'insensitive' as const } }] } : {}) };
-      const [model, count] = await Promise.all([request.prismaTenant.artigo.findMany({ where, orderBy: { codigo: 'asc' }, skip: request.query.startIndex, take: request.query.maxRows }), request.prismaTenant.artigo.count({ where })]);
-      return reply.status(200).send({ count, model });
-    });
-    app.post('/manufatura/artigos', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.adicionar)], schema: { tags: ['manufatura'], security: seguranca, body: artigoBody } }, async (request, reply) => {
-      const artigo = await request.prismaTenant.artigo.create({ data: { estabelecimentoId: request.estabelecimentoId, ...request.body } as Prisma.ArtigoUncheckedCreateInput });
-      return reply.status(201).send(artigo);
-    });
-    app.put('/manufatura/artigos/:id', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.editar)], schema: { tags: ['manufatura'], security: seguranca, params: idParam, body: artigoBody } }, async (request, reply) => {
-      const artigo = await request.prismaTenant.artigo.findFirst({ where: { idArtigo: request.params.id, estabelecimentoId: request.estabelecimentoId } });
-      if (!artigo) return reply.status(404).send({ message: 'Artigo não encontrado.' });
-      return reply.status(200).send(await request.prismaTenant.artigo.update({ where: { idArtigo: artigo.idArtigo }, data: request.body as Prisma.ArtigoUncheckedUpdateInput }));
-    });
-    app.delete('/manufatura/artigos/:id', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.excluir)], schema: { tags: ['manufatura'], security: seguranca, params: idParam } }, async (request, reply) => {
-      const artigo = await request.prismaTenant.artigo.findFirst({ where: { idArtigo: request.params.id, estabelecimentoId: request.estabelecimentoId } });
-      if (!artigo) return reply.status(404).send({ message: 'Artigo não encontrado.' });
-      await request.prismaTenant.artigo.delete({ where: { idArtigo: artigo.idArtigo } });
-      return reply.status(204).send();
-    });
-    app.get('/manufatura/artigos-centros-trabalho', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.acesso)], schema: { tags: ['manufatura'], security: seguranca, querystring: cicloQuery } }, async (request, reply) => {
-      const termo = request.query.termo;
-      const where = { artigo: { estabelecimentoId: request.estabelecimentoId, ...(request.query.artigoCodigo ? { codigo: { contains: request.query.artigoCodigo, mode: 'insensitive' as const } } : {}), ...(termo ? { OR: [{ codigo: { contains: termo, mode: 'insensitive' as const } }, { descricao: { contains: termo, mode: 'insensitive' as const } }] } : {}) }, centroTrabalho: { estabelecimentoId: request.estabelecimentoId, ...(request.query.centroCodigo ? { codigo: { contains: request.query.centroCodigo, mode: 'insensitive' as const } } : {}) }, ...(request.query.ativo ? { ativo: request.query.ativo === 'true' } : {}) };
-      const [model, count] = await Promise.all([request.prismaTenant.artigoCentroTrabalho.findMany({ where, include: { artigo: true, centroTrabalho: true }, orderBy: { criadoEm: 'desc' }, skip: request.query.startIndex, take: request.query.maxRows }), request.prismaTenant.artigoCentroTrabalho.count({ where })]);
-      return reply.status(200).send({ count, model });
-    });
-    app.get('/manufatura/artigos-centros-trabalho/export', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.exportar)], schema: { tags: ['manufatura'], security: seguranca, querystring: cicloQuery } }, async (request, reply) => {
-      const termo = request.query.termo;
-      const where = { artigo: { estabelecimentoId: request.estabelecimentoId, ...(request.query.artigoCodigo ? { codigo: { contains: request.query.artigoCodigo, mode: 'insensitive' as const } } : {}), ...(termo ? { OR: [{ codigo: { contains: termo, mode: 'insensitive' as const } }, { descricao: { contains: termo, mode: 'insensitive' as const } }] } : {}) }, centroTrabalho: { estabelecimentoId: request.estabelecimentoId, ...(request.query.centroCodigo ? { codigo: { contains: request.query.centroCodigo, mode: 'insensitive' as const } } : {}) }, ...(request.query.ativo ? { ativo: request.query.ativo === 'true' } : {}) };
-      const rows = await request.prismaTenant.artigoCentroTrabalho.findMany({ where, include: { artigo: true, centroTrabalho: true }, orderBy: { criadoEm: 'desc' } });
-      const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('Artigos e ciclos');
-      sheet.columns = [
-        { header: 'artigoCodigo', key: 'artigoCodigo', width: 18 }, { header: 'centroCodigo', key: 'centroCodigo', width: 18 },
-        { header: 'cicloProdutivoHora', key: 'cicloProdutivoHora', width: 20 }, { header: 'cicloProdutivoPecaSegundos', key: 'cicloProdutivoPecaSegundos', width: 24 },
-        { header: 'tempoPreparacaoSegundos', key: 'tempoPreparacaoSegundos', width: 24 }, { header: 'fatorRefugo', key: 'fatorRefugo', width: 14 },
-        { header: 'quantidadeRefugo', key: 'quantidadeRefugo', width: 18 }, { header: 'quantidadePerda', key: 'quantidadePerda', width: 18 },
-        { header: 'apontarPreparacao', key: 'apontarPreparacao', width: 18 }, { header: 'tempoMaquinaSegundos', key: 'tempoMaquinaSegundos', width: 22 },
-        { header: 'loteMultiplo', key: 'loteMultiplo', width: 14 }, { header: 'ativo', key: 'ativo', width: 10 },
-      ];
-      for (const row of rows) sheet.addRow({ artigoCodigo: row.artigo.codigo, centroCodigo: row.centroTrabalho.codigo, ...row });
-      const buffer = await workbook.xlsx.writeBuffer();
-      return reply.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').header('content-disposition', 'attachment; filename="artigos-centros-trabalho.xlsx"').send(Buffer.from(buffer));
-    });
-    app.post('/manufatura/artigos-centros-trabalho/import', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.importar)], schema: { tags: ['manufatura'], security: seguranca, body: importacaoXlsxBody } }, async (request, reply) => {
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(Buffer.from(request.body.arquivoBase64, 'base64') as never);
-      const sheet = workbook.worksheets[0];
-      if (!sheet) return reply.status(422).send({ message: 'A planilha não possui uma aba válida.' });
-      const headers = (sheet.getRow(1).values as unknown[]).slice(1).map((value) => String(value ?? '').trim());
-      const index = new Map(headers.map((header, position) => [header, position + 1]));
-      const texto = (row: ExcelJS.Row, key: string) => String(row.getCell(index.get(key) ?? 0).value ?? '').trim();
-      const numero = (row: ExcelJS.Row, key: string) => Number(texto(row, key).replace(',', '.') || 0);
-      const erros: { linha: number; mensagem: string }[] = [];
-      let importados = 0;
-      for (let linha = 2; linha <= sheet.rowCount; linha += 1) {
-        const row = sheet.getRow(linha);
-        if (row.cellCount === 0) continue;
-        try {
-          const artigoCodigo = texto(row, 'artigoCodigo');
-          const centroCodigo = texto(row, 'centroCodigo');
-          if (!artigoCodigo || !centroCodigo) throw new Error('artigoCodigo e centroCodigo são obrigatórios.');
-          const [artigo, centro] = await Promise.all([
-            request.prismaTenant.artigo.findFirst({ where: { estabelecimentoId: request.estabelecimentoId, codigo: artigoCodigo } }),
-            request.prismaTenant.centroTrabalho.findFirst({ where: { estabelecimentoId: request.estabelecimentoId, codigo: centroCodigo } }),
-          ]);
-          if (!artigo) throw new Error(`Artigo "${artigoCodigo}" não encontrado.`);
-          if (!centro) throw new Error(`Centro de trabalho "${centroCodigo}" não encontrado.`);
-          if (centro.status !== 'ATIVO') throw new Error(`Centro de trabalho "${centroCodigo}" está inativo.`);
-          await request.prismaTenant.artigoCentroTrabalho.upsert({
-            where: { artigoId_centroTrabalhoId: { artigoId: artigo.idArtigo, centroTrabalhoId: centro.idCentroTrabalho } },
-            create: { artigoId: artigo.idArtigo, centroTrabalhoId: centro.idCentroTrabalho, cicloProdutivoHora: numero(row, 'cicloProdutivoHora'), cicloProdutivoPecaSegundos: numero(row, 'cicloProdutivoPecaSegundos'), tempoPreparacaoSegundos: numero(row, 'tempoPreparacaoSegundos'), fatorRefugo: numero(row, 'fatorRefugo'), quantidadeRefugo: numero(row, 'quantidadeRefugo'), quantidadePerda: numero(row, 'quantidadePerda'), apontarPreparacao: numero(row, 'apontarPreparacao'), tempoMaquinaSegundos: numero(row, 'tempoMaquinaSegundos'), loteMultiplo: numero(row, 'loteMultiplo'), ativo: texto(row, 'ativo') !== 'false' },
-            update: { cicloProdutivoHora: numero(row, 'cicloProdutivoHora'), cicloProdutivoPecaSegundos: numero(row, 'cicloProdutivoPecaSegundos'), tempoPreparacaoSegundos: numero(row, 'tempoPreparacaoSegundos'), fatorRefugo: numero(row, 'fatorRefugo'), quantidadeRefugo: numero(row, 'quantidadeRefugo'), quantidadePerda: numero(row, 'quantidadePerda'), apontarPreparacao: numero(row, 'apontarPreparacao'), tempoMaquinaSegundos: numero(row, 'tempoMaquinaSegundos'), loteMultiplo: numero(row, 'loteMultiplo'), ativo: texto(row, 'ativo') !== 'false' },
-          });
-          importados += 1;
-        } catch (error) { erros.push({ linha, mensagem: error instanceof Error ? error.message : 'Linha inválida.' }); }
-      }
-      return reply.status(200).send({ importados, erros });
-    });
-    app.get('/manufatura/configuracao-campos', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.configuracao)], schema: { tags: ['manufatura'], security: seguranca, querystring: configuracaoCamposQuery } }, async (request, reply) => {
-      const existentes = await request.prismaTenant.$queryRaw<{ campo: string; visivel: boolean; ordem: number }[]>(Prisma.sql`SELECT campo, visivel, ordem FROM configuracoes_campos WHERE estabelecimento_id = ${request.estabelecimentoId} AND tela = ${request.query.tela} ORDER BY ordem ASC`);
-      const porCampo = new Map(existentes.map((campo) => [campo.campo, campo]));
-      return reply.send({ model: CAMPOS_ARTIGOS_CICLOS.map((campo, ordem) => porCampo.get(campo) ?? { campo, ordem, visivel: true }) });
-    });
-    app.put('/manufatura/configuracao-campos', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.configuracao)], schema: { tags: ['manufatura'], security: seguranca, body: configuracaoCamposBody } }, async (request, reply) => {
-      await request.prismaTenant.$transaction(async (tx) => {
-        for (const campo of request.body.campos) {
-          await tx.$executeRaw(Prisma.sql`INSERT INTO configuracoes_campos ("idConfiguracaoCampo", estabelecimento_id, tela, campo, visivel, ordem, criado_em, atualizado_em) VALUES (gen_random_uuid(), ${request.estabelecimentoId}, ${request.body.tela}, ${campo.campo}, ${campo.visivel}, ${campo.ordem}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ON CONFLICT (estabelecimento_id, tela, campo) DO UPDATE SET visivel = EXCLUDED.visivel, ordem = EXCLUDED.ordem, atualizado_em = CURRENT_TIMESTAMP`);
-        }
-      });
-      return reply.send({ ok: true });
-    });
-    app.post('/manufatura/artigos-centros-trabalho', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.adicionar)], schema: { tags: ['manufatura'], security: seguranca, body: artigoCentroBody } }, async (request, reply) => {
-      const [artigo, centro] = await Promise.all([request.prismaTenant.artigo.findFirst({ where: { idArtigo: request.body.artigoId, estabelecimentoId: request.estabelecimentoId } }), request.prismaTenant.centroTrabalho.findFirst({ where: { idCentroTrabalho: request.body.centroTrabalhoId, estabelecimentoId: request.estabelecimentoId } })]);
-      if (!artigo) return reply.status(422).send({ message: 'Artigo inexistente.' });
-      if (!centro) return reply.status(422).send({ message: 'Centro de trabalho inexistente.' });
-      if (centro.status !== 'ATIVO') return reply.status(422).send({ message: 'Centro de trabalho inativo.' });
-      const { artigoId, centroTrabalhoId, ...valores } = request.body;
-      return reply.status(201).send(await request.prismaTenant.artigoCentroTrabalho.create({ data: { artigoId, centroTrabalhoId, ...valores } as Prisma.ArtigoCentroTrabalhoUncheckedCreateInput }));
-    });
-    app.put('/manufatura/artigos-centros-trabalho/:id', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.editar)], schema: { tags: ['manufatura'], security: seguranca, params: idParam, body: artigoCentroBody } }, async (request, reply) => {
-      const existente = await request.prismaTenant.artigoCentroTrabalho.findFirst({ where: { idArtigoCentroTrabalho: request.params.id, artigo: { estabelecimentoId: request.estabelecimentoId }, centroTrabalho: { estabelecimentoId: request.estabelecimentoId } } });
-      if (!existente) return reply.status(404).send({ message: 'Ciclo do artigo não encontrado.' });
-      const [artigo, centro] = await Promise.all([request.prismaTenant.artigo.findFirst({ where: { idArtigo: request.body.artigoId, estabelecimentoId: request.estabelecimentoId } }), request.prismaTenant.centroTrabalho.findFirst({ where: { idCentroTrabalho: request.body.centroTrabalhoId, estabelecimentoId: request.estabelecimentoId } })]);
-      if (!artigo) return reply.status(422).send({ message: 'Artigo inexistente.' });
-      if (!centro) return reply.status(422).send({ message: 'Centro de trabalho inexistente.' });
-      if (centro.status !== 'ATIVO') return reply.status(422).send({ message: 'Centro de trabalho inativo.' });
-      const { artigoId, centroTrabalhoId, ...valores } = request.body;
-      return reply.status(200).send(await request.prismaTenant.artigoCentroTrabalho.update({ where: { idArtigoCentroTrabalho: existente.idArtigoCentroTrabalho }, data: { artigoId, centroTrabalhoId, ...valores } as Prisma.ArtigoCentroTrabalhoUncheckedUpdateInput }));
-    });
-    app.delete('/manufatura/artigos-centros-trabalho/:id', { preHandler: [...contexto, deps.autorizar(PERMISSOES_ARTIGOS.excluir)], schema: { tags: ['manufatura'], security: seguranca, params: idParam } }, async (request, reply) => {
-      const existente = await request.prismaTenant.artigoCentroTrabalho.findFirst({ where: { idArtigoCentroTrabalho: request.params.id, artigo: { estabelecimentoId: request.estabelecimentoId } } });
-      if (!existente) return reply.status(404).send({ message: 'Ciclo do artigo não encontrado.' });
-      await request.prismaTenant.artigoCentroTrabalho.delete({ where: { idArtigoCentroTrabalho: existente.idArtigoCentroTrabalho } });
-      return reply.status(204).send();
-    });
-
     app.post('/manufatura/planos-producao', {
       preHandler: [...contexto, deps.autorizar('manufatura:create')],
       schema: { tags: ['manufatura'], summary: 'Cria um plano de produção', security: seguranca, body: planoProducaoBody },
@@ -839,6 +1144,99 @@ export function manufaturaRoutes(deps: ManufaturaRoutesDeps) {
         schema: { tags: ['manufatura'], summary, security: seguranca, body: ordemProducaoBody },
       }, async (request, reply) => criarOrdem(request, reply, origem));
     }
+
+    // --------------------------------------- Ciclo de vida da Ordem de Produção
+    // Transições de estado (liberar/cancelar/baixar) em lote por ids; iniciar é
+    // unitário (paridade com a abertura de ordem no terminal). Idempotentes.
+    app.post(
+      '/manufatura/ordens-producao/liberar',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:liberar')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Libera ordens pendentes (NAO_LIBERADA/RECUSADA; LIBERADA é idempotente)',
+          security: seguranca,
+          body: idsOrdensProducaoBody,
+        },
+      },
+      async (request, reply) => {
+        const { liberarOrdensProducao } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await liberarOrdensProducao.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            usuarioId: request.usuarioId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.post(
+      '/manufatura/ordens-producao/cancelar',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:cancelar')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Cancela ordens (recusa iniciadas/concluídas/baixadas; motivo opcional)',
+          security: seguranca,
+          body: cancelarOrdensProducaoBody,
+        },
+      },
+      async (request, reply) => {
+        const { cancelarOrdensProducao } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await cancelarOrdensProducao.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.post(
+      '/manufatura/ordens-producao/baixar',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:baixar')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Baixa ordens concluídas (BAIXADA é idempotente)',
+          security: seguranca,
+          body: idsOrdensProducaoBody,
+        },
+      },
+      async (request, reply) => {
+        const { baixarOrdensProducao } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await baixarOrdensProducao.executar({
+            estabelecimentoId: request.estabelecimentoId,
+            usuarioId: request.usuarioId,
+            ...request.body,
+          }),
+        );
+      },
+    );
+
+    app.post(
+      '/manufatura/ordens-producao/:id/iniciar',
+      {
+        preHandler: [...contexto, deps.autorizar('manufatura:update')],
+        schema: {
+          tags: ['manufatura'],
+          summary: 'Inicia uma ordem liberada (INICIADA é idempotente)',
+          security: seguranca,
+          params: idParam,
+        },
+      },
+      async (request, reply) => {
+        const { iniciarOrdemProducao } = deps.montarUseCases(request.prismaTenant);
+        return reply.status(200).send(
+          await iniciarOrdemProducao.executar({
+            idOrdemProducao: request.params.id,
+            estabelecimentoId: request.estabelecimentoId,
+          }),
+        );
+      },
+    );
 
     // ------------------------------------------------------------------ Turnos
     app.get(

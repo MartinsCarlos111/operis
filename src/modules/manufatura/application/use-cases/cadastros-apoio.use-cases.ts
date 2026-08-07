@@ -1,25 +1,31 @@
 import { Calendario } from '../../domain/entities/calendario.js';
 import { GrupoMaquina, type RegraDespacho } from '../../domain/entities/grupo-maquina.js';
+import { QualidadeItem } from '../../domain/entities/qualidade-item.js';
 import type { StatusRecurso } from '@shared/domain/status-recurso.js';
 import type { GeradorId } from '@shared/domain/gerador-id.js';
 import type {
   CalendarioRepository,
   CriterioListagem,
   GrupoMaquinaRepository,
+  QualidadeItemRepository,
 } from '../../domain/repositories/manufatura.repositories.js';
 import {
   CalendarioEmUsoError,
   CalendarioNaoEncontradoError,
   CodigoCalendarioJaExisteError,
   CodigoGrupoMaquinaJaExisteError,
+  DescricaoQualidadeItemJaExisteError,
   GrupoMaquinaEmUsoError,
   GrupoMaquinaNaoEncontradoError,
+  QualidadeItemNaoEncontradaError,
 } from '../../domain/exceptions/manufatura.errors.js';
 import {
   paraCalendarioDTO,
   paraGrupoMaquinaDTO,
+  paraQualidadeItemDTO,
   type CalendarioDTO,
   type GrupoMaquinaDTO,
+  type QualidadeItemDTO,
   type ListaPaginadaDTO,
 } from '../dtos/manufatura.dtos.js';
 
@@ -237,5 +243,111 @@ export class ListarGruposMaquinaUseCase {
       this.grupos.contar(criterio.estabelecimentoId, criterio.termo),
     ]);
     return { count, model: itens.map(paraGrupoMaquinaDTO) };
+  }
+}
+
+// ---------------------------------------------------------- Qualidade do Item
+
+export interface EntradaQualidadeItem {
+  estabelecimentoId: string;
+  descricao: string;
+}
+
+export class CriarQualidadeItemUseCase {
+  constructor(
+    private readonly qualidades: QualidadeItemRepository,
+    private readonly ids: GeradorId,
+  ) {}
+
+  async executar(input: EntradaQualidadeItem): Promise<QualidadeItemDTO> {
+    const qualidade = QualidadeItem.criar({ ...input, idQualidadeItem: this.ids.gerar() });
+
+    const existente = await this.qualidades.buscarPorDescricao(
+      qualidade.descricao,
+      input.estabelecimentoId,
+    );
+    if (existente) {
+      throw new DescricaoQualidadeItemJaExisteError(qualidade.descricao);
+    }
+
+    await this.qualidades.salvar(qualidade);
+    return paraQualidadeItemDTO(qualidade);
+  }
+}
+
+export class EditarQualidadeItemUseCase {
+  constructor(private readonly qualidades: QualidadeItemRepository) {}
+
+  async executar(
+    input: EntradaQualidadeItem & { idQualidadeItem: string },
+  ): Promise<QualidadeItemDTO> {
+    const qualidade = await this.qualidades.buscarPorId(
+      input.idQualidadeItem,
+      input.estabelecimentoId,
+    );
+    if (!qualidade) {
+      throw new QualidadeItemNaoEncontradaError(input.idQualidadeItem);
+    }
+
+    const novaDescricao = input.descricao.trim();
+    if (novaDescricao !== qualidade.descricao) {
+      const colisao = await this.qualidades.buscarPorDescricao(
+        novaDescricao,
+        input.estabelecimentoId,
+      );
+      if (colisao) {
+        throw new DescricaoQualidadeItemJaExisteError(novaDescricao);
+      }
+    }
+
+    qualidade.alterar(input);
+    await this.qualidades.salvar(qualidade);
+    return paraQualidadeItemDTO(qualidade);
+  }
+}
+
+export class ExcluirQualidadeItemUseCase {
+  constructor(private readonly qualidades: QualidadeItemRepository) {}
+
+  async executar(input: { idQualidadeItem: string; estabelecimentoId: string }): Promise<void> {
+    const qualidade = await this.qualidades.buscarPorId(
+      input.idQualidadeItem,
+      input.estabelecimentoId,
+    );
+    if (!qualidade) {
+      throw new QualidadeItemNaoEncontradaError(input.idQualidadeItem);
+    }
+
+    await this.qualidades.excluir(input.idQualidadeItem);
+  }
+}
+
+export class BuscarQualidadeItemUseCase {
+  constructor(private readonly qualidades: QualidadeItemRepository) {}
+
+  async executar(input: {
+    idQualidadeItem: string;
+    estabelecimentoId: string;
+  }): Promise<QualidadeItemDTO> {
+    const qualidade = await this.qualidades.buscarPorId(
+      input.idQualidadeItem,
+      input.estabelecimentoId,
+    );
+    if (!qualidade) {
+      throw new QualidadeItemNaoEncontradaError(input.idQualidadeItem);
+    }
+    return paraQualidadeItemDTO(qualidade);
+  }
+}
+
+export class ListarQualidadesItemUseCase {
+  constructor(private readonly qualidades: QualidadeItemRepository) {}
+
+  async executar(criterio: CriterioListagem): Promise<ListaPaginadaDTO<QualidadeItemDTO>> {
+    const [itens, count] = await Promise.all([
+      this.qualidades.listar(criterio),
+      this.qualidades.contar(criterio.estabelecimentoId, criterio.termo),
+    ]);
+    return { count, model: itens.map(paraQualidadeItemDTO) };
   }
 }

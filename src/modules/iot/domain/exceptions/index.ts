@@ -35,3 +35,30 @@ export class EstabelecimentoInativoError extends AppError {
     super(`Estabelecimento "${estabelecimentoId}" está inativo`);
   }
 }
+
+export class VersaoFirmwareJaExisteError extends AppError {
+  readonly code = 'VERSAO_FIRMWARE_JA_EXISTE';
+  readonly httpStatus = 409;
+
+  constructor(modelo: number, versao: string) {
+    super(`Já existe firmware do modelo ${modelo} com a versão "${versao}"`);
+  }
+}
+
+export class FirmwareNaoEncontradoError extends AppError {
+  readonly code = 'FIRMWARE_NAO_ENCONTRADO';
+  readonly httpStatus = 404;
+
+  constructor(identificador: string) {
+    super(`Firmware "${identificador}" não foi encontrado`);
+  }
+}
+
+export class AtualizacaoFirmwareEmCursoError extends AppError {
+  readonly code = 'ATUALIZACAO_FIRMWARE_EM_CURSO';
+  readonly httpStatus = 409;
+
+  constructor(dispositivoId: string) {
+    super(`Dispositivo "${dispositivoId}" já tem uma atualização de firmware em curso`);
+  }
+}

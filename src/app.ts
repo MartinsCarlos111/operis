@@ -21,7 +21,12 @@ async function main(): Promise<void> {
   }
 
   const prisma = createPrismaClient(process.env.DATABASE_URL);
-  const { app, connectionManager } = buildApp({ prisma, jwtSecret, chaveMestraCriptografia });
+  const { app, connectionManager } = buildApp({
+    prisma,
+    jwtSecret,
+    chaveMestraCriptografia,
+    publicApiUrl: process.env.PUBLIC_API_URL,
+  });
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`recebido ${signal}, encerrando`);

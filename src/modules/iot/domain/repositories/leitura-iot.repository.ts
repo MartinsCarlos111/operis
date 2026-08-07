@@ -20,6 +20,22 @@ export interface ContagemPorEntrada {
   ultimaLeituraEm: Date | null;
 }
 
+/**
+ * Estado de uma porta cuja Função é ACIONADO — o firmware reenvia o mesmo
+ * valor (0/1) a cada report periódico mesmo sem mudança, então SUM não faz
+ * sentido aqui; o que importa é o valor mais recente e quantas vezes ele
+ * mudou (transição 0→1 ou 1→0) no período.
+ */
+export interface EstadoPorEntrada {
+  input: number;
+  /** Valor da leitura mais recente no período (0 ou 1, tipicamente). */
+  valorAtual: number | null;
+  /** Quantidade de mudanças de valor entre leituras consecutivas no período. */
+  transicoes: number;
+  ocorrencias: number;
+  ultimaLeituraEm: Date | null;
+}
+
 export interface LeituraIotRepository {
   /**
    * Grava em lote ignorando duplicatas (chaveEvento). Retorna quantas foram
@@ -27,6 +43,8 @@ export interface LeituraIotRepository {
    */
   salvarLote(leituras: LeituraIot[]): Promise<number>;
   listar(criterio: CriterioLeiturasIot): Promise<LeituraIot[]>;
-  /** Agregação por porta no período: alimenta os contadores. */
+  /** Agregação por porta no período: alimenta os contadores de Pulso/Pulso fim. */
   contarPorEntrada(criterio: CriterioLeiturasIot): Promise<ContagemPorEntrada[]>;
+  /** Estado atual + transições de uma porta ACIONADO no período. */
+  estadoDaEntrada(criterio: CriterioLeiturasIot & { input: number }): Promise<EstadoPorEntrada>;
 }

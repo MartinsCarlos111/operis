@@ -12,12 +12,37 @@ import {
   ExcluirGrupoMaquinaUseCase,
   ListarCalendariosUseCase,
   ListarGruposMaquinaUseCase,
+  BuscarQualidadeItemUseCase,
+  CriarQualidadeItemUseCase,
+  EditarQualidadeItemUseCase,
+  ExcluirQualidadeItemUseCase,
+  ListarQualidadesItemUseCase,
 } from './application/use-cases/cadastros-apoio.use-cases.js';
+import {
+  BuscarItemUseCase,
+  CriarItemUseCase,
+  EditarItemUseCase,
+  ExcluirItemUseCase,
+  ListarItensUseCase,
+} from './application/use-cases/item.use-cases.js';
+import {
+  BuscarCentroTrabalhoItemUseCase,
+  CriarCentroTrabalhoItemUseCase,
+  EditarCentroTrabalhoItemUseCase,
+  ExcluirCentroTrabalhoItemUseCase,
+  ListarCentrosTrabalhoItensUseCase,
+} from './application/use-cases/centro-trabalho-item.use-cases.js';
 import {
   BuscarOrdemProducaoUseCase,
   CriarOrdemProducaoUseCase,
   ListarOrdensProducaoUseCase,
 } from './application/use-cases/ordem-producao.use-cases.js';
+import {
+  BaixarOrdensProducaoUseCase,
+  CancelarOrdensProducaoUseCase,
+  IniciarOrdemProducaoUseCase,
+  LiberarOrdensProducaoUseCase,
+} from './application/use-cases/ordem-producao-ciclo-vida.use-cases.js';
 import {
   BuscarCentroTrabalhoUseCase,
   CriarCentroTrabalhoUseCase,
@@ -47,6 +72,19 @@ import {
   ReintegrarMovimentoUseCase,
 } from './application/use-cases/movimento.use-cases.js';
 import {
+  BuscarEtiquetaUseCase,
+  CancelarEtiquetaUseCase,
+  ImprimirEtiquetaUseCase,
+  ListarEtiquetasUseCase,
+  ListarRastreabilidadesUseCase,
+} from './application/use-cases/etiqueta.use-cases.js';
+import {
+  CriarFerramentaUseCase,
+  EditarFerramentaUseCase,
+  ExcluirFerramentaUseCase,
+  ListarFerramentasUseCase,
+} from './application/use-cases/ferramenta.use-cases.js';
+import {
   PrismaCatalogoTipos,
   PrismaMovimentoRepository,
 } from './infrastructure/persistence/prisma-movimento.repositories.js';
@@ -57,7 +95,15 @@ import {
   PrismaReservaRepository,
   PrismaGrupoMaquinaRepository,
   PrismaOrdemProducaoRepository,
+  PrismaQualidadeItemRepository,
+  PrismaItemRepository,
+  PrismaCentroTrabalhoItemRepository,
 } from './infrastructure/persistence/prisma-manufatura.repositories.js';
+import {
+  PrismaEtiquetaRepository,
+  PrismaRastreabilidadeRepository,
+} from './infrastructure/persistence/prisma-etiqueta.repositories.js';
+import { PrismaFerramentaRepository } from './infrastructure/persistence/prisma-ferramenta.repository.js';
 import { PrismaVerificadorEstabelecimento } from './infrastructure/gateways/prisma-verificador-estabelecimento.js';
 import { manufaturaRoutes, type ManufaturaUseCases } from './infrastructure/http/manufatura.routes.js';
 
@@ -81,6 +127,9 @@ export function construirModuloManufatura(ids: GeradorId, cadeia: CadeiaAutoriza
   const montarUseCases = (prisma: PrismaClient): ManufaturaUseCases => {
     const calendarios = new PrismaCalendarioRepository(prisma);
     const grupos = new PrismaGrupoMaquinaRepository(prisma);
+    const qualidadesItem = new PrismaQualidadeItemRepository(prisma);
+    const itens = new PrismaItemRepository(prisma);
+    const centrosTrabalhoItens = new PrismaCentroTrabalhoItemRepository(prisma);
     const centros = new PrismaCentroTrabalhoRepository(prisma);
     const turnos = new PrismaTurnoRepository(prisma);
     const reservas = new PrismaReservaRepository(prisma);
@@ -88,6 +137,9 @@ export function construirModuloManufatura(ids: GeradorId, cadeia: CadeiaAutoriza
     const catalogoTipos = new PrismaCatalogoTipos(prisma);
     const estabelecimentos = new PrismaVerificadorEstabelecimento(prisma);
     const ordens = new PrismaOrdemProducaoRepository(prisma);
+    const etiquetas = new PrismaEtiquetaRepository(prisma);
+    const rastreabilidades = new PrismaRastreabilidadeRepository(prisma);
+    const ferramentas = new PrismaFerramentaRepository(prisma);
 
     return {
       criarCalendario: new CriarCalendarioUseCase(calendarios, ids),
@@ -101,6 +153,24 @@ export function construirModuloManufatura(ids: GeradorId, cadeia: CadeiaAutoriza
       excluirGrupoMaquina: new ExcluirGrupoMaquinaUseCase(grupos),
       buscarGrupoMaquina: new BuscarGrupoMaquinaUseCase(grupos),
       listarGruposMaquina: new ListarGruposMaquinaUseCase(grupos),
+
+      criarQualidadeItem: new CriarQualidadeItemUseCase(qualidadesItem, ids),
+      editarQualidadeItem: new EditarQualidadeItemUseCase(qualidadesItem),
+      excluirQualidadeItem: new ExcluirQualidadeItemUseCase(qualidadesItem),
+      buscarQualidadeItem: new BuscarQualidadeItemUseCase(qualidadesItem),
+      listarQualidadesItem: new ListarQualidadesItemUseCase(qualidadesItem),
+
+      criarItem: new CriarItemUseCase(itens, qualidadesItem, ids),
+      editarItem: new EditarItemUseCase(itens, qualidadesItem),
+      excluirItem: new ExcluirItemUseCase(itens),
+      buscarItem: new BuscarItemUseCase(itens),
+      listarItens: new ListarItensUseCase(itens),
+
+      criarCentroTrabalhoItem: new CriarCentroTrabalhoItemUseCase(centrosTrabalhoItens, itens, centros, ids),
+      editarCentroTrabalhoItem: new EditarCentroTrabalhoItemUseCase(centrosTrabalhoItens),
+      excluirCentroTrabalhoItem: new ExcluirCentroTrabalhoItemUseCase(centrosTrabalhoItens),
+      buscarCentroTrabalhoItem: new BuscarCentroTrabalhoItemUseCase(centrosTrabalhoItens),
+      listarCentrosTrabalhoItens: new ListarCentrosTrabalhoItensUseCase(centrosTrabalhoItens),
 
       criarCentroTrabalho: new CriarCentroTrabalhoUseCase(
         centros,
@@ -121,6 +191,11 @@ export function construirModuloManufatura(ids: GeradorId, cadeia: CadeiaAutoriza
       criarOrdemProducao: new CriarOrdemProducaoUseCase(ordens, estabelecimentos, ids),
       buscarOrdemProducao: new BuscarOrdemProducaoUseCase(ordens),
       listarOrdensProducao: new ListarOrdensProducaoUseCase(ordens),
+
+      liberarOrdensProducao: new LiberarOrdensProducaoUseCase(ordens),
+      cancelarOrdensProducao: new CancelarOrdensProducaoUseCase(ordens),
+      baixarOrdensProducao: new BaixarOrdensProducaoUseCase(ordens),
+      iniciarOrdemProducao: new IniciarOrdemProducaoUseCase(ordens),
 
       registrarMovimento: new RegistrarMovimentoUseCase(
         movimentos,
@@ -147,6 +222,19 @@ export function construirModuloManufatura(ids: GeradorId, cadeia: CadeiaAutoriza
       excluirTurno: new ExcluirTurnoUseCase(turnos),
       buscarTurno: new BuscarTurnoUseCase(turnos),
       listarTurnos: new ListarTurnosUseCase(turnos),
+
+      // Etiqueta + Rastreabilidade (itens concluídos físicos)
+      imprimirEtiqueta: new ImprimirEtiquetaUseCase(etiquetas, rastreabilidades, ids),
+      cancelarEtiqueta: new CancelarEtiquetaUseCase(etiquetas),
+      buscarEtiqueta: new BuscarEtiquetaUseCase(etiquetas),
+      listarEtiquetas: new ListarEtiquetasUseCase(etiquetas),
+      listarRastreabilidades: new ListarRastreabilidadesUseCase(rastreabilidades),
+
+      // Ferramenta (catálogo + vida útil)
+      criarFerramenta: new CriarFerramentaUseCase(ferramentas, ids),
+      editarFerramenta: new EditarFerramentaUseCase(ferramentas),
+      excluirFerramenta: new ExcluirFerramentaUseCase(ferramentas),
+      listarFerramentas: new ListarFerramentasUseCase(ferramentas),
     };
   };
 

@@ -12,9 +12,12 @@ import { MonitorarBrokerTenantUseCase } from './application/use-cases/monitorar-
 import { RabbitMqManagementMonitor } from './infrastructure/gateways/rabbitmq-management-monitor.js';
 import { ConfigurarSmtpTenantUseCase } from './application/use-cases/configurar-smtp-tenant.use-case.js';
 import { ObterSmtpTenantUseCase } from './application/use-cases/obter-smtp-tenant.use-case.js';
+import { ConfigurarMinioTenantUseCase } from './application/use-cases/configurar-minio-tenant.use-case.js';
+import { ObterMinioTenantUseCase } from './application/use-cases/obter-minio-tenant.use-case.js';
 import { PrismaTenantRepository } from './infrastructure/persistence/prisma-tenant.repository.js';
 import { PrismaConfiguracaoRabbitMqTenantRepository } from './infrastructure/persistence/prisma-configuracao-rabbitmq-tenant.repository.js';
 import { PrismaConfiguracaoSmtpTenantRepository } from './infrastructure/persistence/prisma-configuracao-smtp-tenant.repository.js';
+import { PrismaConfiguracaoMinioTenantRepository } from './infrastructure/persistence/prisma-configuracao-minio-tenant.repository.js';
 import { PrismaSuperAdminRepository } from './infrastructure/persistence/prisma-super-admin.repository.js';
 import { PrismaTenantAdministradorRepository } from './infrastructure/persistence/prisma-tenant-administrador.repository.js';
 import { AesGcmEncryptionService } from './infrastructure/gateways/aes-gcm-encryption.service.js';
@@ -50,6 +53,7 @@ export function construirModuloOperisControl(
   const administradores = new PrismaTenantAdministradorRepository(prisma);
   const rabbitmqConfigs = new PrismaConfiguracaoRabbitMqTenantRepository(prisma);
   const smtpConfigs = new PrismaConfiguracaoSmtpTenantRepository(prisma);
+  const minioConfigs = new PrismaConfiguracaoMinioTenantRepository(prisma);
 
   const encryption = new AesGcmEncryptionService(opcoes.chaveMestraCriptografia);
   const hasher = new ScryptHasherSenha();
@@ -81,8 +85,28 @@ export function construirModuloOperisControl(
     };
   };
 
+  /**
+   * Traduz tenantId → acesso ao object storage MinIO (secret decifrado em
+   * memória). Exposto para o composition root injetar no módulo iot (guarda
+   * binários de firmware), que não pode importar o Control Plane.
+   */
+  const resolverAcessoObjectStorage = async (tenantId: string) => {
+    const config = await minioConfigs.buscarPorTenant(tenantId);
+    if (!config) return null;
+    return {
+      host: config.host,
+      porta: config.porta,
+      bucket: config.bucket,
+      accessKey: config.accessKey,
+      secretKey: encryption.decifrar(config.secretKeyCifrada),
+      sslHabilitado: config.sslHabilitado,
+      pathStyleAccess: config.pathStyleAccess,
+    };
+  };
+
   return {
     resolverAcessoBroker,
+    resolverAcessoObjectStorage,
     tenantResolver,
     routes: adminRoutes({
       autenticarSuperAdminUseCase: new AutenticarSuperAdminUseCase(superAdmins, hasher),
@@ -118,6 +142,8 @@ export function construirModuloOperisControl(
       ),
       configurarSmtpTenant: new ConfigurarSmtpTenantUseCase(smtpConfigs, tenants, encryption, ids),
       obterSmtpTenant: new ObterSmtpTenantUseCase(smtpConfigs),
+      configurarMinioTenant: new ConfigurarMinioTenantUseCase(minioConfigs, tenants, encryption, ids),
+      obterMinioTenant: new ObterMinioTenantUseCase(minioConfigs),
     }),
   };
 }

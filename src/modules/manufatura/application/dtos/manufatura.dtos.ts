@@ -1,6 +1,9 @@
 import type { StatusRecurso } from '@shared/domain/status-recurso.js';
 import type { Calendario } from '../../domain/entities/calendario.js';
 import type { GrupoMaquina, RegraDespacho } from '../../domain/entities/grupo-maquina.js';
+import type { QualidadeItem } from '../../domain/entities/qualidade-item.js';
+import type { Item } from '../../domain/entities/item.js';
+import type { CentroTrabalhoItem } from '../../domain/entities/centro-trabalho-item.js';
 import type {
   CentroTrabalho,
   MetasCentroTrabalho,
@@ -54,6 +57,82 @@ export function paraGrupoMaquinaDTO(grupo: GrupoMaquina): GrupoMaquinaDTO {
     regraDespacho: grupo.regraDespacho,
     criadoEm: grupo.criadoEm.toISOString(),
     atualizadoEm: grupo.atualizadoEm.toISOString(),
+  };
+}
+
+export interface QualidadeItemDTO {
+  idQualidadeItem: string;
+  descricao: string;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+export function paraQualidadeItemDTO(qualidade: QualidadeItem): QualidadeItemDTO {
+  return {
+    idQualidadeItem: qualidade.idQualidadeItem,
+    descricao: qualidade.descricao,
+    criadoEm: qualidade.criadoEm.toISOString(),
+    atualizadoEm: qualidade.atualizadoEm.toISOString(),
+  };
+}
+
+export interface ItemDTO {
+  idItem: string;
+  codigo: string;
+  descricao: string;
+  status: StatusRecurso;
+  qualidadeItemIds: string[];
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+export function paraItemDTO(item: Item): ItemDTO {
+  return {
+    idItem: item.idItem,
+    codigo: item.codigo,
+    descricao: item.descricao,
+    status: item.status,
+    qualidadeItemIds: [...item.qualidadeItemIds],
+    criadoEm: item.criadoEm.toISOString(),
+    atualizadoEm: item.atualizadoEm.toISOString(),
+  };
+}
+
+export interface CentroTrabalhoItemDTO {
+  idCentroTrabalhoItem: string;
+  itemId: string;
+  centroTrabalhoId: string;
+  cicloProdutivoHora: number | null;
+  cicloProdutivoPecaSegundos: number | null;
+  tempoPreparacaoSegundos: number | null;
+  fatorRefugo: number | null;
+  qtdRefugo: number | null;
+  qtdPerda: number | null;
+  apontarPreparacao: number | null;
+  tempoMaquinaSegundos: number | null;
+  loteMultiplo: number | null;
+  ativo: boolean;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+export function paraCentroTrabalhoItemDTO(vinculo: CentroTrabalhoItem): CentroTrabalhoItemDTO {
+  return {
+    idCentroTrabalhoItem: vinculo.idCentroTrabalhoItem,
+    itemId: vinculo.itemId,
+    centroTrabalhoId: vinculo.centroTrabalhoId,
+    cicloProdutivoHora: vinculo.cicloProdutivoHora,
+    cicloProdutivoPecaSegundos: vinculo.cicloProdutivoPecaSegundos,
+    tempoPreparacaoSegundos: vinculo.tempoPreparacaoSegundos,
+    fatorRefugo: vinculo.fatorRefugo,
+    qtdRefugo: vinculo.qtdRefugo,
+    qtdPerda: vinculo.qtdPerda,
+    apontarPreparacao: vinculo.apontarPreparacao,
+    tempoMaquinaSegundos: vinculo.tempoMaquinaSegundos,
+    loteMultiplo: vinculo.loteMultiplo,
+    ativo: vinculo.ativo,
+    criadoEm: vinculo.criadoEm.toISOString(),
+    atualizadoEm: vinculo.atualizadoEm.toISOString(),
   };
 }
 

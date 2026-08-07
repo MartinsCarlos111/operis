@@ -1,4 +1,5 @@
 import type { EntradaIot } from './entrada-iot.js';
+import { MAXIMO_ENTRADAS_POR_DISPOSITIVO } from './entrada-iot.js';
 
 interface DispositivoIotProps {
   idDispositivoIot: string;
@@ -7,7 +8,7 @@ interface DispositivoIotProps {
   modelo: number;
   versaoFirmware: string | null;
   ip: string | null;
-  centroTrabalho: string | null;
+  centroTrabalhoId: string | null;
   estabelecimentoId: string;
   entradas: EntradaIot[];
   criadoEm: Date;
@@ -34,7 +35,7 @@ export class DispositivoIot {
     modelo?: number | undefined;
     versaoFirmware?: string | null | undefined;
     ip?: string | null | undefined;
-    centroTrabalho?: string | null | undefined;
+    centroTrabalhoId?: string | null | undefined;
   }): DispositivoIot {
     const serial = DispositivoIot.exigirTexto(
       input.serial,
@@ -52,7 +53,7 @@ export class DispositivoIot {
       modelo: input.modelo ?? 0,
       versaoFirmware: input.versaoFirmware ?? null,
       ip: input.ip ?? null,
-      centroTrabalho: input.centroTrabalho?.trim() || null,
+      centroTrabalhoId: input.centroTrabalhoId ?? null,
       estabelecimentoId: input.estabelecimentoId,
       entradas: [],
       criadoEm: agora,
@@ -68,7 +69,7 @@ export class DispositivoIot {
     nome: string;
     modelo?: number | undefined;
     ip?: string | null | undefined;
-    centroTrabalho?: string | null | undefined;
+    centroTrabalhoId?: string | null | undefined;
   }): void {
     this.props.nome = DispositivoIot.exigirTexto(
       input.nome,
@@ -76,8 +77,8 @@ export class DispositivoIot {
     );
     if (input.modelo !== undefined) this.props.modelo = input.modelo;
     if (input.ip !== undefined) this.props.ip = input.ip;
-    if (input.centroTrabalho !== undefined) {
-      this.props.centroTrabalho = input.centroTrabalho?.trim() || null;
+    if (input.centroTrabalhoId !== undefined) {
+      this.props.centroTrabalhoId = input.centroTrabalhoId;
     }
     this.props.atualizadoEm = new Date();
   }
@@ -86,15 +87,23 @@ export class DispositivoIot {
    * Substitui o conjunto de entradas. É assim (e não add/remove avulsos)
    * porque a tela edita a configuração do coletor como um todo e o firmware
    * recebe a configuração inteira de uma vez.
+   *
+   * O hardware é fixo em 5 portas (4 digitais + 1 analógica) — mesmo limite
+   * do firmware (`digital_input_conf[4]` + `analog_input_conf` único), por
+   * isso no máximo uma entrada por número de porta.
    */
   definirEntradas(entradas: EntradaIot[]): void {
-    const vistas = new Set<string>();
+    if (entradas.length > MAXIMO_ENTRADAS_POR_DISPOSITIVO) {
+      throw new Error(
+        `O coletor suporta no máximo ${MAXIMO_ENTRADAS_POR_DISPOSITIVO} entradas (4 digitais + 1 analógica).`,
+      );
+    }
+    const vistas = new Set<number>();
     for (const entrada of entradas) {
-      const chave = `${entrada.tipo}:${entrada.input}`;
-      if (vistas.has(chave)) {
-        throw new Error(`Porta ${entrada.tipo} ${entrada.input} configurada mais de uma vez`);
+      if (vistas.has(entrada.input)) {
+        throw new Error(`Porta ${entrada.input} configurada mais de uma vez`);
       }
-      vistas.add(chave);
+      vistas.add(entrada.input);
     }
     this.props.entradas = entradas;
     this.props.atualizadoEm = new Date();
@@ -129,8 +138,8 @@ export class DispositivoIot {
   get ip(): string | null {
     return this.props.ip;
   }
-  get centroTrabalho(): string | null {
-    return this.props.centroTrabalho;
+  get centroTrabalhoId(): string | null {
+    return this.props.centroTrabalhoId;
   }
   get estabelecimentoId(): string {
     return this.props.estabelecimentoId;

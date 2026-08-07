@@ -11,9 +11,9 @@ CREATE TABLE "configuracoes_campos" (
 );
 CREATE UNIQUE INDEX "configuracoes_campos_estabelecimento_id_tela_campo_key" ON "configuracoes_campos"("estabelecimento_id", "tela", "campo");
 CREATE INDEX "configuracoes_campos_estabelecimento_id_tela_idx" ON "configuracoes_campos"("estabelecimento_id", "tela");
-ALTER TABLE "configuracoes_campos" ADD CONSTRAINT "configuracoes_campos_estabelecimento_id_fkey" FOREIGN KEY ("estabelecimento_id") REFERENCES "estabelecimentos"("id_estabelecimento") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "configuracoes_campos" ADD CONSTRAINT "configuracoes_campos_estabelecimento_id_fkey" FOREIGN KEY ("estabelecimento_id") REFERENCES "estabelecimentos"("idEstabelecimento") ON DELETE CASCADE ON UPDATE CASCADE;
 
-INSERT INTO "permissoes" ("id_permissao", "chave", "grupo", "descricao")
+INSERT INTO "permissoes" ("idPermissao", "chave", "grupo", "descricao")
 SELECT gen_random_uuid(), chave, 'manufatura:artigos-ciclos', descricao
 FROM (VALUES
   ('manufatura:artigos-ciclos:acesso', 'Artigos e ciclos - acesso'),
@@ -27,7 +27,7 @@ FROM (VALUES
 WHERE NOT EXISTS (SELECT 1 FROM "permissoes" p WHERE p."chave" = novas.chave);
 
 INSERT INTO "niveis_acesso_permissoes" ("nivel_acesso_id", "permissao_id")
-SELECT n."id_nivel_acesso", p."id_permissao"
+SELECT n."idNivelAcesso", p."idPermissao"
 FROM "niveis_acesso" n CROSS JOIN "permissoes" p
 WHERE n."nome" = 'Administrador' AND p."grupo" = 'manufatura:artigos-ciclos'
 ON CONFLICT DO NOTHING;

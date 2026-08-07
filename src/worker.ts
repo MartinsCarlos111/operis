@@ -2,14 +2,27 @@ import { createPrismaClient } from '@shared/infra/prisma/prisma-client.js';
 import { CryptoGeradorId } from '@shared/infra/gateways/crypto-gerador-id.js';
 import { AesGcmEncryptionService } from '@modules/operis_control/infrastructure/gateways/aes-gcm-encryption.service.js';
 import { IotWorker, type LogWorker } from '@modules/iot/worker/iot-worker.js';
+import { IndicadoresWorker } from '@modules/indicadores/worker/indicadores-worker.js';
+import { MonitorWorker } from '@modules/monitor/worker/monitor-worker.js';
+import { MoverOrdensParaHistoricoWorker } from '@modules/manufatura/worker/mover-ordens-para-historico.worker.js';
+import { CalculoConsumoFerramentaWorker } from '@modules/manufatura/worker/calculo-consumo-ferramenta.worker.js';
 import { PrismaClient } from '@prisma/client';
 
 /**
- * Processo do worker de ingestão IoT. Sobe um consumidor por tenant que tenha
- * broker configurado, cada um ligado ao banco dedicado daquele tenant.
+ * Processo dos workers do operis. Cada tenant ativo com broker+banco configurados
+ * sobe um conjunto de workers por tempo longo:
  *
- * Separado da API de propósito: consumo AMQP é conexão de longa duração e não
- * pode disputar o event loop que atende as rotas HTTP.
+ *   - IotWorker                            : ingestão AMQP (registro de leituras,
+ *                                            REGISTER, OTAUPDATE).
+ *   - IndicadoresWorker                    : cálculo OEE/TEEP a cada 10s
+ *                                            (paridade com `ManServiceCalc.CalcularOEE`).
+ *   - MonitorWorker                        : snapshot CentroTrabalhoOnline a cada
+ *                                            10s (`MontarCentrosTrabalhoOnline`).
+ *   - CalculoConsumoFerramentaWorker       : consumo por turno (`CalcularConsumoFerramenta`).
+ *   - MoverOrdensParaHistoricoWorker       : job diário (`MoverOrdensParaHistorico`).
+ *
+ * Separado da API de propósito: AMQP é conexão de longa duração e os ticks de
+ * 10s não podem disputar o event loop que atende as rotas HTTP.
  *
  *   npm run worker
  */
@@ -18,6 +31,14 @@ const log: LogWorker = (nivel, msg, extra) => {
   if (nivel === 'erro') console.error(linha, extra ?? '');
   else console.log(linha);
 };
+
+interface WorkersTenant {
+  iot: IotWorker;
+  indicadores: IndicadoresWorker;
+  monitor: MonitorWorker;
+  consumoFerramenta: CalculoConsumoFerramentaWorker;
+  moverHistorico: MoverOrdensParaHistoricoWorker;
+}
 
 async function main(): Promise<void> {
   const chaveMestra = process.env.ENCRYPTION_MASTER_KEY;
@@ -35,7 +56,7 @@ async function main(): Promise<void> {
     include: { rabbitmq: true, database: true },
   });
 
-  const workers: IotWorker[] = [];
+  const workersPorTenant: WorkersTenant[] = [];
   const conexoesTenant: PrismaClient[] = [];
 
   for (const tenant of tenants) {
@@ -54,7 +75,10 @@ async function main(): Promise<void> {
     const prismaTenant = new PrismaClient({ datasources: { db: { url: urlBanco } } });
     conexoesTenant.push(prismaTenant);
 
-    const worker = new IotWorker({
+    const logT = (nivel: 'info' | 'erro', msg: string, extra?: unknown) =>
+      log(nivel, `[${tenant.slug}] ${msg}`, extra);
+
+    const iot = new IotWorker({
       acesso: {
         host: tenant.rabbitmq.host,
         porta: tenant.rabbitmq.porta,
@@ -68,21 +92,56 @@ async function main(): Promise<void> {
       },
       prisma: prismaTenant,
       ids,
-      log: (nivel, msg, extra) => log(nivel, `[${tenant.slug}] ${msg}`, extra),
+      log: logT,
     });
 
-    await worker.iniciar();
-    workers.push(worker);
-    log('info', `worker do tenant "${tenant.slug}" iniciado`);
+    const indicadores = new IndicadoresWorker({
+      prisma: prismaTenant,
+      ids,
+      log: logT,
+    });
+
+    const monitor = new MonitorWorker({
+      prisma: prismaTenant,
+      onlineDoCentro: async () => true, // FIXME: ligar ao consultor de conexões RabbitMQ.
+      log: logT,
+    });
+
+    const consumoFerramenta = new CalculoConsumoFerramentaWorker({
+      prisma: prismaTenant,
+      log: logT,
+    });
+
+    const moverHistorico = new MoverOrdensParaHistoricoWorker({
+      prisma: prismaTenant,
+      log: logT,
+    });
+
+    await iot.iniciar();
+    await indicadores.iniciar();
+    await monitor.iniciar();
+    await consumoFerramenta.iniciar();
+    await moverHistorico.iniciar();
+
+    workersPorTenant.push({ iot, indicadores, monitor, consumoFerramenta, moverHistorico });
+    log('info', `workers do tenant "${tenant.slug}" iniciados`);
   }
 
-  if (workers.length === 0) {
-    log('erro', 'nenhum tenant com broker configurado — nada a consumir');
+  if (workersPorTenant.length === 0) {
+    log('erro', 'nenhum tenant com broker configurado — nada a processar');
   }
 
   const encerrar = async (sinal: string): Promise<void> => {
     log('info', `recebido ${sinal}, encerrando`);
-    await Promise.all(workers.map((w) => w.encerrar()));
+    await Promise.all(
+      workersPorTenant.flatMap((w) => [
+        w.iot.encerrar(),
+        w.indicadores.encerrar(),
+        w.monitor.encerrar(),
+        w.consumoFerramenta.encerrar(),
+        w.moverHistorico.encerrar(),
+      ]),
+    );
     await Promise.all(conexoesTenant.map((c) => c.$disconnect()));
     await controlPlane.$disconnect();
     process.exit(0);

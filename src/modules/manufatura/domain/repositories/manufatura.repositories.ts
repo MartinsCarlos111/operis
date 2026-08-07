@@ -3,6 +3,9 @@ import type { GrupoMaquina } from '../entities/grupo-maquina.js';
 import type { CentroTrabalho } from '../entities/centro-trabalho.js';
 import type { Turno } from '../entities/turno.js';
 import type { Reserva } from '../entities/reserva.js';
+import type { QualidadeItem } from '../entities/qualidade-item.js';
+import type { Item } from '../entities/item.js';
+import type { CentroTrabalhoItem } from '../entities/centro-trabalho-item.js';
 
 /**
  * Critério de listagem paginada dos cadastros de manufatura — mesma assinatura
@@ -77,6 +80,46 @@ export interface GrupoMaquinaRepository {
   salvar(grupo: GrupoMaquina): Promise<void>;
   excluir(id: string): Promise<void>;
   contarCentrosTrabalho(id: string): Promise<number>;
+}
+
+export interface QualidadeItemRepository {
+  buscarPorId(id: string, estabelecimentoId: string): Promise<QualidadeItem | null>;
+  buscarPorDescricao(descricao: string, estabelecimentoId: string): Promise<QualidadeItem | null>;
+  listar(criterio: CriterioListagem): Promise<QualidadeItem[]>;
+  contar(estabelecimentoId: string, termo?: string | undefined): Promise<number>;
+  salvar(qualidade: QualidadeItem): Promise<void>;
+  excluir(id: string): Promise<void>;
+}
+
+/** CentroTrabalhoItem não busca por texto — filtra opcionalmente por item/centro. */
+export interface CriterioListagemCentroTrabalhoItem {
+  estabelecimentoId: string;
+  startIndex: number;
+  maxRows: number;
+  itemId?: string | undefined;
+  centroTrabalhoId?: string | undefined;
+}
+
+export interface CentroTrabalhoItemRepository {
+  buscarPorId(id: string, estabelecimentoId: string): Promise<CentroTrabalhoItem | null>;
+  buscarPorItemECentro(
+    itemId: string,
+    centroTrabalhoId: string,
+    estabelecimentoId: string,
+  ): Promise<CentroTrabalhoItem | null>;
+  listar(criterio: CriterioListagemCentroTrabalhoItem): Promise<CentroTrabalhoItem[]>;
+  contar(criterio: Omit<CriterioListagemCentroTrabalhoItem, 'startIndex' | 'maxRows'>): Promise<number>;
+  salvar(vinculo: CentroTrabalhoItem): Promise<void>;
+  excluir(id: string): Promise<void>;
+}
+
+export interface ItemRepository {
+  buscarPorId(id: string, estabelecimentoId: string): Promise<Item | null>;
+  buscarPorCodigo(codigo: string, estabelecimentoId: string): Promise<Item | null>;
+  listar(criterio: CriterioListagem): Promise<Item[]>;
+  contar(estabelecimentoId: string, termo?: string | undefined): Promise<number>;
+  salvar(item: Item): Promise<void>;
+  excluir(id: string): Promise<void>;
 }
 
 export interface CentroTrabalhoRepository {

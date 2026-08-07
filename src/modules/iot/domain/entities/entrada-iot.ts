@@ -1,10 +1,56 @@
-export const TIPOS_ENTRADA_IOT = ['DIGITAL', 'ANALOGICA'] as const;
-export const CONTEXTOS_IOT = ['PRODUCAO', 'PARADA', 'QUALIDADE', 'MANUTENCAO'] as const;
-export const FUNCOES_IOT = ['CONTADOR', 'STATUS', 'SINAL', 'TEMPERATURA', 'PRESSAO'] as const;
+/**
+ * Modo elétrico de leitura do sensor (ex-EnumTypeIOT do firmware, paridade com
+ * `get_read_mode_from_type`). Não é "digital vs analógica" — isso é decidido
+ * pelo número da porta (1-4 = digital, 5 = analógica).
+ */
+export const TIPOS_ENTRADA_IOT = ['PNP', 'NPN', 'CHANGE_PNP', 'CHANGE_NPN'] as const;
+
+/** Contextos válidos para portas digitais (Input 1-4) — ex-EnumContextIOT 1-10. */
+export const CONTEXTOS_DIGITAIS_IOT = [
+  'LIGADO_DESLIGADO',
+  'PRODUZINDO_NAO_PRODUZINDO',
+  'GENERICO',
+  'VELOCIDADE_ANGULAR',
+  'VELOCIDADE_LINEAR',
+  'CONTAGEM_CICLOS',
+  'CONTAGEM_ITENS',
+  'METROS_PRODUZIDOS',
+  'VOLUME_PRODUZIDO',
+  'TEMPO_DECORRIDO',
+] as const;
+
+/** Contextos válidos para a porta analógica (Input 5) — ex-EnumContextIOT 11-18. */
+export const CONTEXTOS_ANALOGICOS_IOT = [
+  'TEMPERATURA',
+  'PRESSAO',
+  'PERCENTUAL',
+  'VIBRACAO',
+  'VAZAO_VOLUMETRICA',
+  'VAZAO_MASSICA',
+  'DISTANCIA',
+  'CORRENTE',
+] as const;
+
+export const CONTEXTOS_IOT = [...CONTEXTOS_DIGITAIS_IOT, ...CONTEXTOS_ANALOGICOS_IOT] as const;
+
+/** ex-EnumFunctionIOT do firmware — como o sinal/pulso da porta é interpretado. */
+export const FUNCOES_IOT = ['PULSO', 'ACIONADO', 'ENCODER', 'PULSO_INICIO', 'PULSO_FIM'] as const;
 
 export type TipoEntradaIot = (typeof TIPOS_ENTRADA_IOT)[number];
 export type ContextoIot = (typeof CONTEXTOS_IOT)[number];
 export type FuncaoIot = (typeof FUNCOES_IOT)[number];
+
+/** Porta 5 é a única analógica do hardware — o restante (1-4) é digital. */
+export const INPUT_PORTA_ANALOGICA = 5;
+export const INPUTS_PORTAS_DIGITAIS = [1, 2, 3, 4] as const;
+export const MAXIMO_ENTRADAS_POR_DISPOSITIVO = INPUTS_PORTAS_DIGITAIS.length + 1;
+
+export function ehContextoValidoParaPorta(contexto: ContextoIot, input: number): boolean {
+  const analogicos: readonly string[] = CONTEXTOS_ANALOGICOS_IOT;
+  return input === INPUT_PORTA_ANALOGICA
+    ? analogicos.includes(contexto)
+    : !analogicos.includes(contexto);
+}
 
 interface EntradaIotProps {
   idEntradaIot: string;
@@ -26,8 +72,10 @@ interface EntradaIotProps {
  * Entrada digital/analógica de um coletor. Migrada de Octopus `ConfigIOT`.
  *
  * Entidade filha do agregado DispositivoIot — nunca é manipulada fora dele.
- * Os `param1..4` vêm do legado sem semântica definida; são repassados ao
- * firmware como estão, por isso ficam opcionais e sem validação de domínio.
+ * `param1..4` têm significado que muda por Contexto (ex.: pulsos por volta,
+ * diâmetro da roda, escala de tensão da porta analógica — calculado dentro do
+ * próprio firmware); o domínio só repassa os valores, sem validar por
+ * contexto, porque essa tabela de significados vive no firmware, não aqui.
  */
 export class EntradaIot {
   private constructor(private props: EntradaIotProps) {}
@@ -51,8 +99,23 @@ export class EntradaIot {
     if (label.length === 0) {
       throw new Error('Label da entrada não pode estar em branco');
     }
-    if (!Number.isInteger(input.input) || input.input < 0) {
-      throw new Error('Número da porta (input) deve ser um inteiro não negativo');
+    if (
+      !Number.isInteger(input.input) ||
+      !((INPUTS_PORTAS_DIGITAIS as readonly number[]).includes(input.input) ||
+        input.input === INPUT_PORTA_ANALOGICA)
+    ) {
+      throw new Error(
+        `Porta (input) deve ser 1-${INPUTS_PORTAS_DIGITAIS.length} (digital) ou ${INPUT_PORTA_ANALOGICA} (analógica) — hardware fixo em ${MAXIMO_ENTRADAS_POR_DISPOSITIVO} portas.`,
+      );
+    }
+    // Porta 5 lida "como digital" usa os mesmos contextos das portas 1-4.
+    const tratarComoDigital = input.input !== INPUT_PORTA_ANALOGICA || (input.analogicaComoDigital ?? false);
+    if (!ehContextoValidoParaPorta(input.contexto, tratarComoDigital ? 1 : INPUT_PORTA_ANALOGICA)) {
+      throw new Error(
+        tratarComoDigital
+          ? `Contexto '${input.contexto}' é exclusivo da porta analógica.`
+          : `Contexto '${input.contexto}' é exclusivo de portas digitais.`,
+      );
     }
     return new EntradaIot({
       idEntradaIot: input.idEntradaIot,

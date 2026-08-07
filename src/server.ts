@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
+import fastifyMultipart from '@fastify/multipart';
 import type { PrismaClient } from '@prisma/client';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { registerErrorHandler } from '@shared/http/error-handler.js';
@@ -18,6 +19,8 @@ import { construirModuloCrachas } from '@modules/crachas/crachas.module.js';
 import { construirModuloLayouts } from '@modules/layouts/layouts.module.js';
 import { construirModuloIot } from '@modules/iot/iot.module.js';
 import { construirModuloManufatura } from '@modules/manufatura/manufatura.module.js';
+import { construirModuloIndicadores } from '@modules/indicadores/indicadores.module.js';
+import { construirModuloMonitor } from '@modules/monitor/monitor.module.js';
 import { construirModuloOperisControl } from '@modules/operis_control/operis-control.module.js';
 
 export interface BuildAppOptions {
@@ -26,6 +29,13 @@ export interface BuildAppOptions {
   jwtSecret: string;
   /** Chave mestra AES-256-GCM (32 bytes base64) do EncryptionService. */
   chaveMestraCriptografia: string;
+  /**
+   * URL pública desta API (ex.: https://api.exemplo.com), sem barra final.
+   * Usada só para montar o link de download de firmware que o coletor IoT
+   * baixa via HTTP — precisa ser alcançável pelo dispositivo físico, não
+   * necessariamente igual a `host`/`port` (pode estar atrás de proxy/LB).
+   */
+  publicApiUrl?: string | undefined;
   logger?: boolean;
 }
 
@@ -51,6 +61,7 @@ export function buildApp({
   prisma,
   jwtSecret,
   chaveMestraCriptografia,
+  publicApiUrl = 'http://localhost:3000',
   logger = true,
 }: BuildAppOptions): BuiltApp {
   const app = Fastify({ logger });
@@ -61,6 +72,9 @@ export function buildApp({
   app.setSerializerCompiler(serializerCompiler);
 
   app.register(fastifyJwt, { secret: jwtSecret });
+  // Limite generoso: firmware ESP32 (~1-2MB); a rota de upload é a única
+  // que aceita multipart no sistema hoje (envio de binário de firmware IoT).
+  app.register(fastifyMultipart, { limits: { fileSize: 8 * 1024 * 1024 } });
   registerErrorHandler(app);
 
   // Swagger antes das rotas para capturá-las. registerSwagger registra os
@@ -94,10 +108,23 @@ export function buildApp({
   const areaUsuarios = construirModuloAreaUsuarios(usuarios.cadeia);
   const crachas = construirModuloCrachas(ids, usuarios.cadeia);
   const layouts = construirModuloLayouts(ids, usuarios.cadeia);
-  // O acesso ao broker vem do Control Plane: é aqui, no composition root, que
-  // os dois planos se encontram — o módulo iot não importa operis_control.
-  const iot = construirModuloIot(ids, usuarios.cadeia, operisControl.resolverAcessoBroker);
+  // O acesso ao broker/object storage vem do Control Plane: é aqui, no
+  // composition root, que os dois planos se encontram — o módulo iot não
+  // importa operis_control.
+  const iot = construirModuloIot(
+    ids,
+    usuarios.cadeia,
+    operisControl.resolverAcessoBroker,
+    operisControl.resolverAcessoObjectStorage,
+    (tenantId) => connectionManager.getConnection(tenantId),
+    publicApiUrl,
+  );
   const manufatura = construirModuloManufatura(ids, usuarios.cadeia);
+  const indicadores = construirModuloIndicadores(ids, usuarios.cadeia);
+  const monitor = construirModuloMonitor(usuarios.cadeia, {
+    seriaisConectados: iot.seriaisConectados,
+    montarDispositivoUseCases: iot.montarDispositivoUseCases,
+  });
 
   app.register(usuarios.routes);
   app.register(estabelecimentos.routes);
@@ -108,8 +135,10 @@ export function buildApp({
   app.register(areaUsuarios.routes);
   app.register(crachas.routes);
   app.register(layouts.routes);
-  app.register(iot.routes);
+  for (const routes of iot.routes) app.register(routes);
   app.register(manufatura.routes);
+  app.register(indicadores.routes);
+  app.register(monitor.routes);
   app.register(operisControl.routes);
 
   return { app, connectionManager };

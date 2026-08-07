@@ -21,7 +21,7 @@ export const DispositivoIotMapper = {
       modelo: row.modelo,
       versaoFirmware: row.versaoFirmware,
       ip: row.ip,
-      centroTrabalho: row.centroTrabalho,
+      centroTrabalhoId: row.centroTrabalhoId,
       estabelecimentoId: row.estabelecimentoId,
       entradas: (row.entradas ?? []).map((e) =>
         EntradaIot.restaurar({

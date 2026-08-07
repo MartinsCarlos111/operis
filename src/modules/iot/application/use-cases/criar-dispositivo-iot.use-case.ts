@@ -15,7 +15,7 @@ export interface CriarDispositivoIotInput {
   nome: string;
   modelo?: number | undefined;
   ip?: string | null | undefined;
-  centroTrabalho?: string | null | undefined;
+  centroTrabalhoId?: string | null | undefined;
 }
 
 /**
@@ -50,7 +50,7 @@ export class CriarDispositivoIotUseCase {
       estabelecimentoId: input.estabelecimentoId,
       modelo: input.modelo,
       ip: input.ip,
-      centroTrabalho: input.centroTrabalho,
+      centroTrabalhoId: input.centroTrabalhoId,
     });
 
     await this.dispositivos.salvar(dispositivo);

@@ -3,6 +3,7 @@ import { LeituraIot } from '../../domain/entities/leitura-iot.js';
 import type {
   ContagemPorEntrada,
   CriterioLeiturasIot,
+  EstadoPorEntrada,
   LeituraIotRepository,
 } from '../../domain/repositories/leitura-iot.repository.js';
 import type { ContextoIot } from '../../domain/entities/entrada-iot.js';
@@ -77,5 +78,48 @@ export class PrismaLeituraIotRepository implements LeituraIotRepository {
       ocorrencias: g._count._all,
       ultimaLeituraEm: g._max.ocorridoEm ?? null,
     }));
+  }
+
+  /**
+   * Sem SUM/groupBy: precisa da sequência ordenada para contar transições
+   * (mudança de valor entre leituras consecutivas). O volume por porta única
+   * é limitado (1 leitura a cada report do coletor, tipicamente 30s).
+   */
+  async estadoDaEntrada(
+    criterio: CriterioLeiturasIot & { input: number },
+  ): Promise<EstadoPorEntrada> {
+    const rows = await this.prisma.leituraIot.findMany({
+      where: {
+        dispositivoId: criterio.dispositivoId,
+        input: criterio.input,
+        ocorridoEm: { gte: criterio.de, lte: criterio.ate },
+      },
+      orderBy: { ocorridoEm: 'asc' },
+      select: { valor: true, ocorridoEm: true },
+    });
+
+    if (rows.length === 0) {
+      return {
+        input: criterio.input,
+        valorAtual: null,
+        transicoes: 0,
+        ocorrencias: 0,
+        ultimaLeituraEm: null,
+      };
+    }
+
+    let transicoes = 0;
+    for (let i = 1; i < rows.length; i++) {
+      if (Number(rows[i]!.valor) !== Number(rows[i - 1]!.valor)) transicoes++;
+    }
+
+    const ultima = rows[rows.length - 1]!;
+    return {
+      input: criterio.input,
+      valorAtual: Number(ultima.valor),
+      transicoes,
+      ocorrencias: rows.length,
+      ultimaLeituraEm: ultima.ocorridoEm,
+    };
   }
 }

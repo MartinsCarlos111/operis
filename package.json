@@ -21,13 +21,16 @@
     "test:integration": "vitest run --project integration",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "prisma:reprovision": "tsx prisma/reprovisionar-tenant-databases.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1104.0",
     "@fastify/jwt": "^10.2.0",
+    "@fastify/multipart": "^10.1.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.0",
     "@prisma/client": "^6.1.0",
@@ -35,6 +38,8 @@
     "exceljs": "^4.4.0",
     "fastify": "^5.2.0",
     "fastify-type-provider-zod": "^4.0.2",
+    "socket.io": "^4.7.5",
+    "strong-soap": "^4.0.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -9,7 +9,7 @@
 
 ## 1. Resumo executivo
 
-O operis cobre bem o **cadastro transversal** (estabelecimentos, usuários, áreas, crachás, impressoras, layouts, notificações-cadastro, IoT-ingestão) e a **fundação** da manufatura (calendário, grupo de máquina, centro de trabalho, ordem de produção, artigos-ciclos). As **lacunas críticas** concentram-se em três blocos do legado ainda não migrados:
+O operis cobre bem o **cadastro transversal** (estabelecimentos, usuários, áreas, crachás, impressoras, layouts, notificações-cadastro, IoT-ingestão) e a **fundação** da manufatura (calendário, grupo de máquina, centro de trabalho, ordem de produção, itens-ciclos). As **lacunas críticas** concentram-se em três blocos do legado ainda não migrados:
 
 1. **Processos de manufatura em runtime** — movimentos, reservas, plano produção executivo, etiquetas, ferramentas, terminais/equipamentos.
 2. **Monitoramento e indicadores em tempo real** — `CentroTrabalhoOnline`, OEE/TEEP/Disponibilidade/Performance/Qualidade, consumo de ferramenta, diário de bordo.
@@ -42,7 +42,7 @@ Itens **não migrados por decisão** (documentados em `migracao-octopus.md`): UI
 | 17 | IoT — Ingestão de leituras (worker AMQP) | ✅ | Descarte com motivo; deduplicação por `chaveEvento`; só `MOVIMENT` vira leitura. |
 | 18 | IoT — Contadores por entrada configurada | ✅ | Janela default 24h/turno corrente. |
 | 19 | Manufatura: Calendário / Grupo Máquina / Centro Trabalho | ✅ | RNs de forma preservados; Calendário obrigatório; bloqueio de exclusão em uso. |
-| 20 | Manufatura: Artigos + Ciclos por CT (com import/export XLSX) | ✅ | DDD parcial (rotas direto no Prisma); import não derruba lote por linha inválida. |
+| 20 | Manufatura: Itens + Ciclos por CT (com import/export XLSX) | ✅ | DDD parcial (rotas direto no Prisma); import não derruba lote por linha inválida. |
 | 21 | Manufatura: Ordem de Produção (cadastro/seed de status) | 🟡 | Criação + status default por `liberacaoEm` OK; **todo o ciclo de vida** (liberar/cancelar/devolver/baixar/reexecutar/reintegrar/histórico) ❌; **hierarquia pai/filha/irmã** ❌; **regras de despacho** ❌. |
 | 22 | Manufatura: Movimentos | ❌ | Não migrado. |
 | 23 | Manufatura: Reservas | ❌ | Não migrado. |
@@ -222,7 +222,7 @@ Nada migrado. Regras principais do `MovimentosRN.cs`:
 
 ### 4.6 Plano Produção (executivo) 🟡
 Agregado cadastrável existe; regras de **validação + conflito** faltantes:
-- Exige `CentroTrabalhoItem` existente (artigo↔CT) — operis usa `ArtigoCentroTrabalho`.
+- Exige `CentroTrabalhoItem` existente (item↔CT) — operis usa `ItemCentroTrabalho`.
 - `Quantidade > 0`, `DtFimProducao >= DtInicioProducao`.
 - **Bloqueio de conflito de data** (intervalo sobreposto para o mesmo CT) — `BuscarIdPlanoPorCTeDatas`.
 - **Unicidade CT-Item** — cada relação CT-Item só um plano.

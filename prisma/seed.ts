@@ -1,5 +1,6 @@
-import { PrismaClient } from '@prisma/client';
 import { ScryptHasherSenha } from '../src/modules/operis_control/infrastructure/gateways/scrypt-hasher-senha.js';
+import { CATALOGO_PERMISSOES_PADRAO } from '../src/shared/rbac/catalogo-permissoes.js';
+import { PrismaClient } from '@prisma/client';
 
 /**
  * Seed do catálogo de permissões + bootstrap de um estabelecimento com um
@@ -7,58 +8,22 @@ import { ScryptHasherSenha } from '../src/modules/operis_control/infrastructure/
  * Resolve o problema do ovo-e-galinha: as rotas de gestão exigem permissões
  * que só existem depois do seed.
  *
- * Os grupos espelham os módulos do estabelecimento (Linguagem Ubíqua):
- * principal, impressoras, coletores, checklist, manufatura — mais o grupo
- * transversal "configuracoes" (gestão de usuários e perfis).
+ * O catálogo vem de `CATALOGO_PERMISSOES_PADRAO` (fonte única de verdade,
+ * usada também pelas rotas via `autorizar(...)`) — nunca duplicar a lista de
+ * grupos/ações aqui, ou o seed volta a dessincronizar do que as rotas exigem.
  */
-const GRUPOS_PERMISSOES: Record<string, { acoes: string[]; descricao: string }> = {
-  principal: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo principal' },
-  areas: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Cadastro de áreas' },
-  crachas: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Cadastro de crachás' },
-  layouts: {
-    acoes: ['list', 'create', 'update', 'delete'],
-    descricao: 'Variáveis e layouts de etiqueta',
-  },
-  notificacoes: {
-    acoes: ['list', 'create', 'update', 'delete'],
-    descricao: 'Regras e condições de notificação',
-  },
-  impressoras: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Gestão de impressoras' },
-  coletores: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Gestão de coletores' },
-  'dispositivos-iot': {
-    acoes: ['list', 'create', 'update', 'delete'],
-    descricao: 'Cadastro de coletores IoT',
-  },
-  checklist: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo de checklist' },
-  manufatura: { acoes: ['list', 'create', 'update', 'delete'], descricao: 'Módulo de manufatura' },
-  configuracoes: {
-    acoes: ['usuarios', 'niveis_acesso', 'create', 'update'],
-    descricao: 'Configurações e gestão de acesso',
-  },
-};
-
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
   // 1. Catálogo de permissões (idempotente via upsert pela chave única).
-  const chaves: { chave: string; grupo: string; descricao: string }[] = [];
-  for (const [grupo, def] of Object.entries(GRUPOS_PERMISSOES)) {
-    for (const acao of def.acoes) {
-      chaves.push({
-        chave: `${grupo}:${acao}`,
-        grupo,
-        descricao: `${def.descricao} — ${acao}`,
-      });
-    }
-  }
-  for (const p of chaves) {
+  for (const p of CATALOGO_PERMISSOES_PADRAO) {
     await prisma.permissao.upsert({
       where: { chave: p.chave },
       create: p,
       update: { descricao: p.descricao },
     });
   }
-  console.log(`Catálogo: ${chaves.length} permissões garantidas.`);
+  console.log(`Catálogo: ${CATALOGO_PERMISSOES_PADRAO.length} permissões garantidas.`);
 
   // 2. Estabelecimento matriz (bootstrap).
   const matriz = await prisma.estabelecimento.upsert({

@@ -8,6 +8,8 @@ import type { ExcluirDispositivoIotUseCase } from '../../application/use-cases/e
 import type { BuscarDispositivoIotUseCase } from '../../application/use-cases/buscar-dispositivo-iot.use-case.js';
 import type { ListarDispositivosIotUseCase } from '../../application/use-cases/listar-dispositivos-iot.use-case.js';
 import type { ConsultarContadoresIotUseCase } from '../../application/use-cases/consultar-contadores-iot.use-case.js';
+import type { ConsultarFalhasIotUseCase } from '../../application/use-cases/consultar-falhas-iot.use-case.js';
+import type { ConsultarLinhaDoTempoIotUseCase } from '../../application/use-cases/consultar-linha-do-tempo-iot.use-case.js';
 import type { MonitorarBrokerIotUseCase } from '../../application/use-cases/monitorar-broker-iot.use-case.js';
 import {
   CONTEXTOS_IOT,
@@ -42,14 +44,14 @@ const criarBody = z.object({
   nome: z.string().min(1),
   modelo: z.number().int().min(0).optional(),
   ip: z.string().nullable().optional(),
-  centroTrabalho: z.string().nullable().optional(),
+  centroTrabalhoId: z.string().uuid().nullable().optional(),
 });
 
 const editarBody = z.object({
   nome: z.string().min(1),
   modelo: z.number().int().min(0).optional(),
   ip: z.string().nullable().optional(),
-  centroTrabalho: z.string().nullable().optional(),
+  centroTrabalhoId: z.string().uuid().nullable().optional(),
   entradas: z.array(entradaBody).optional(),
 });
 
@@ -82,6 +84,8 @@ export interface DispositivoIotUseCases {
   buscarDispositivo: BuscarDispositivoIotUseCase;
   listarDispositivos: ListarDispositivosIotUseCase;
   consultarContadores: ConsultarContadoresIotUseCase;
+  consultarFalhas: ConsultarFalhasIotUseCase;
+  consultarLinhaDoTempo: ConsultarLinhaDoTempoIotUseCase;
 }
 
 export interface DispositivoIotRoutesDeps {
@@ -238,6 +242,32 @@ export function dispositivoIotRoutes(deps: DispositivoIotRoutesDeps) {
       },
     );
 
+    // Linha do tempo online/offline aproximada (Gantt) — derivada dos
+    // timestamps de leitura, não é histórico real de conexão do broker.
+    app.get(
+      '/dispositivos-iot/:id/linha-do-tempo',
+      {
+        preHandler: [...contexto, deps.autorizar('dispositivos-iot:list')],
+        schema: {
+          tags: ['dispositivos-iot'],
+          summary: 'Linha do tempo online/offline aproximada de um coletor no período',
+          security: seguranca,
+          params: idParam,
+          querystring: periodoQuery,
+        },
+      },
+      async (request, reply) => {
+        const { consultarLinhaDoTempo } = deps.montarUseCases(request.prismaTenant);
+        const dto = await consultarLinhaDoTempo.executar({
+          dispositivoId: request.params.id,
+          estabelecimentoId: request.estabelecimentoId,
+          de: request.query.de ? new Date(request.query.de) : undefined,
+          ate: request.query.ate ? new Date(request.query.ate) : undefined,
+        });
+        return reply.status(200).send(dto);
+      },
+    );
+
     app.delete(
       '/dispositivos-iot/:id',
       {
@@ -253,6 +283,32 @@ export function dispositivoIotRoutes(deps: DispositivoIotRoutesDeps) {
         const { excluirDispositivo } = deps.montarUseCases(request.prismaTenant);
         await excluirDispositivo.executar(request.params.id, request.estabelecimentoId);
         return reply.status(204).send();
+      },
+    );
+
+    // Falhas do período: o contraponto dos contadores — movimentos descartados
+    // na ingestão (serial desconhecido, porta não configurada, etc.).
+    app.get(
+      '/dispositivos-iot/:id/falhas',
+      {
+        preHandler: [...contexto, deps.autorizar('dispositivos-iot:list')],
+        schema: {
+          tags: ['dispositivos-iot'],
+          summary: 'Falhas de leitura de um coletor no período',
+          security: seguranca,
+          params: idParam,
+          querystring: periodoQuery,
+        },
+      },
+      async (request, reply) => {
+        const { consultarFalhas } = deps.montarUseCases(request.prismaTenant);
+        const dto = await consultarFalhas.executar({
+          dispositivoId: request.params.id,
+          estabelecimentoId: request.estabelecimentoId,
+          de: request.query.de ? new Date(request.query.de) : undefined,
+          ate: request.query.ate ? new Date(request.query.ate) : undefined,
+        });
+        return reply.status(200).send(dto);
       },
     );
   };

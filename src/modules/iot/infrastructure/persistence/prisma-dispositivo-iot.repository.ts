@@ -17,7 +17,6 @@ export class PrismaDispositivoIotRepository implements DispositivoIotRepository 
       where.OR = [
         { serial: { contains: limpo, mode: 'insensitive' } },
         { nome: { contains: limpo, mode: 'insensitive' } },
-        { centroTrabalho: { contains: limpo, mode: 'insensitive' } },
       ];
     }
     return where;
@@ -76,7 +75,7 @@ export class PrismaDispositivoIotRepository implements DispositivoIotRepository 
       modelo: dispositivo.modelo,
       versaoFirmware: dispositivo.versaoFirmware,
       ip: dispositivo.ip,
-      centroTrabalho: dispositivo.centroTrabalho,
+      centroTrabalhoId: dispositivo.centroTrabalhoId,
       estabelecimentoId: dispositivo.estabelecimentoId,
       criadoEm: dispositivo.criadoEm,
       atualizadoEm: dispositivo.atualizadoEm,

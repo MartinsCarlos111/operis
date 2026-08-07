@@ -9,7 +9,17 @@ export interface ContadorEntradaDTO {
   label: string;
   contexto: ContextoIot;
   funcao: FuncaoIot;
+  /**
+   * Soma de valores no período — só tem sentido para PULSO/PULSO_INICIO/
+   * PULSO_FIM (incremento resetado a cada report). Para ACIONADO, o firmware
+   * reenvia o mesmo estado a cada report mesmo sem mudança; usar `valorAtual`
+   * e `transicoes` em vez de `total`.
+   */
   total: number;
+  /** Valor da leitura mais recente (0/1) — só preenchido para ACIONADO. */
+  valorAtual: number | null;
+  /** Mudanças de estado no período — só preenchido para ACIONADO. */
+  transicoes: number | null;
   ocorrencias: number;
   ultimaLeituraEm: string | null;
 }
@@ -58,12 +68,30 @@ export class ConsultarContadoresIotUseCase {
     const ate = input.ate ?? this.agora();
     const de = input.de ?? new Date(ate.getTime() - 24 * 60 * 60 * 1000);
 
-    const contagens = await this.leituras.contarPorEntrada({
-      dispositivoId: dispositivo.idDispositivoIot,
-      de,
-      ate,
-    });
-    const porInput = new Map(contagens.map((c) => [c.input, c]));
+    const habilitadas = dispositivo.entradas.filter((e) => e.habilitado);
+
+    // ACIONADO não soma (reenvio periódico do mesmo estado) — calcula
+    // separado, uma consulta por porta; as demais Funções usam o SUM em lote.
+    const acionadas = habilitadas.filter((e) => e.funcao === 'ACIONADO');
+    const demais = habilitadas.filter((e) => e.funcao !== 'ACIONADO');
+
+    const [contagens, estados] = await Promise.all([
+      demais.length > 0
+        ? this.leituras.contarPorEntrada({ dispositivoId: dispositivo.idDispositivoIot, de, ate })
+        : Promise.resolve([]),
+      Promise.all(
+        acionadas.map((e) =>
+          this.leituras.estadoDaEntrada({
+            dispositivoId: dispositivo.idDispositivoIot,
+            de,
+            ate,
+            input: e.input,
+          }),
+        ),
+      ),
+    ]);
+    const contagemPorInput = new Map(contagens.map((c) => [c.input, c]));
+    const estadoPorInput = new Map(estados.map((e) => [e.input, e]));
 
     return {
       dispositivoId: dispositivo.idDispositivoIot,
@@ -71,20 +99,34 @@ export class ConsultarContadoresIotUseCase {
       nome: dispositivo.nome,
       de: de.toISOString(),
       ate: ate.toISOString(),
-      entradas: dispositivo.entradas
-        .filter((e) => e.habilitado)
-        .map((e) => {
-          const c = porInput.get(e.input);
+      entradas: habilitadas.map((e) => {
+        if (e.funcao === 'ACIONADO') {
+          const s = estadoPorInput.get(e.input);
           return {
             input: e.input,
             label: e.label,
             contexto: e.contexto,
             funcao: e.funcao,
-            total: c?.total ?? 0,
-            ocorrencias: c?.ocorrencias ?? 0,
-            ultimaLeituraEm: c?.ultimaLeituraEm ? c.ultimaLeituraEm.toISOString() : null,
+            total: 0,
+            valorAtual: s?.valorAtual ?? null,
+            transicoes: s?.transicoes ?? 0,
+            ocorrencias: s?.ocorrencias ?? 0,
+            ultimaLeituraEm: s?.ultimaLeituraEm ? s.ultimaLeituraEm.toISOString() : null,
           };
-        }),
+        }
+        const c = contagemPorInput.get(e.input);
+        return {
+          input: e.input,
+          label: e.label,
+          contexto: e.contexto,
+          funcao: e.funcao,
+          total: c?.total ?? 0,
+          valorAtual: null,
+          transicoes: null,
+          ocorrencias: c?.ocorrencias ?? 0,
+          ultimaLeituraEm: c?.ultimaLeituraEm ? c.ultimaLeituraEm.toISOString() : null,
+        };
+      }),
     };
   }
 }

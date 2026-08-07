@@ -1,6 +1,6 @@
 # Fluxo de Relação — Octopus (Legado)
 
-> Análise do código localizado em `development/visao4d/octopus`, mapeando o fluxo de relação entre **Centros de Trabalho**, **Artigos**, **Estabelecimentos** e o **Painel de Dados dos Coletores**.
+> Análise do código localizado em `development/visao4d/octopus`, mapeando o fluxo de relação entre **Centros de Trabalho**, **Itens**, **Estabelecimentos** e o **Painel de Dados dos Coletores**.
 
 ---
 
@@ -62,8 +62,8 @@ Domínio "Manufatura". **Nó central do fluxo.**
 - **RN:** `Octopus.RegraNegocio/Manufatura/CentroTrabalhoRN.cs` (valida `estabelecimento.ProdutoManufatura` em `:70, :440, :488`).
 - **Endpoints:** `octopus-service/Controllers/Manufatura/Cadastros/CentrosTrabalhoController.cs` (rota `api/CentrosTrabalho`), `CentroTrabalhoItemController.cs`, `CentroTrabalhoAreaController.cs`, `CentroTrabalhoFerramentaController.cs`, `CentroTrabalhoIOTController.cs` (`api/CentroTrabalhoIOT`).
 
-### Domínio 3 — Artigos / Itens (`Item`)
-Domínio "Manufatura". O termo usado no código é **`Item`** (artigo/produto).
+### Domínio 3 — Itens (`Item`)
+Domínio "Manufatura". O termo usado no código é **`Item`** (produto).
 
 - **Modelo/Entidade:** `Octopus.Modelo/Manufatura/Item.cs` — `IdItem`, `CdItem`, `DsItem`, `QualidadesItem`.
 - **Pontos de uso:**
@@ -106,14 +106,14 @@ O "coletor" tem duas facetas: (a) o **dispositivo físico** (IOT ou Terminal na 
 | `Calendario` → `CentroTrabalho` | 1 : N | `CentroTrabalho.idCalendario` | `CentroTrabalho.cs:26-39`; pivot em todos os DAOs |
 | `Estabelecimento` → `CentroTrabalho` | 1 : N **INDIRETO via `Calendario`** | query `idCalendario IN (SELECT idCalendario FROM Calendario WHERE cdEstabelecimento=...)` | `CentroTrabalhoDAO.cs:56-61, 182-193`; `CentroTrabalhoOnlineDAO.cs:50,63,76,89,105,126-127` |
 | `Estabelecimento` → `OrdemProducao` | 1 : N **DIRETO** | `OrdemProducao.cdEstabelecimento` | `OrdemProducao.cs:14-28` |
-| `CentroTrabalho` ↔ `Item` (Artigo) | **N : M via pivot `CentroTrabalhoItem`** | FK `idCentroTrabalho` + FK `idItem` + dados de ciclo produtivo | `CentroTrabalhoItem.cs`; SQL `20250101_#TP2278_0_CentroTrabalhoItem_create.sql:9-32` (FKs cascade); `CentroTrabalhoItemDAO.cs:23-25, 151-178` |
+| `CentroTrabalho` ↔ `Item` | **N : M via pivot `CentroTrabalhoItem`** | FK `idCentroTrabalho` + FK `idItem` + dados de ciclo produtivo | `CentroTrabalhoItem.cs`; SQL `20250101_#TP2278_0_CentroTrabalhoItem_create.sql:9-32` (FKs cascade); `CentroTrabalhoItemDAO.cs:23-25, 151-178` |
 | `OrdemProducao` → `CentroTrabalho` | N : 1 | `OrdemProducao.idCentroTrabalho` | `OrdemProducao.cs:47-61` |
-| `OrdemProducao` → `Item` (Artigo) | N : 1 (denormalizado por código) | `OrdemProducao.CdItem` (string — código, não FK numérica) | `OrdemProducao.cs:45` |
+| `OrdemProducao` → `Item` | N : 1 (denormalizado por código) | `OrdemProducao.CdItem` (string — código, não FK numérica) | `OrdemProducao.cs:45` |
 | `CentroTrabalho` ↔ `IOT` (coletor) | **1 : 1 (até N) via `CentroTrabalhoIOT`** | `idCentroTrabalho→CentroTrabalho`, `idIOT→IOT` | SQL `20250723_#IND33_0_CentroTrabalhoIOT_create.sql:9-22`; `IOT.cs`; `CentrosTrabalhoIOT.cs` |
 | `CentroTrabalho` → `CentroTrabalhoOnline` | 1 : 1 (snapshot online) | `CentroTrabalhoOnline.idCentroTrabalho` | `CentroTrabalhoOnlineDAO.cs:23-45`; `CentroTrabalhoOnline.cs:8-22` |
 | `CentroTrabalho` → `Movimento` | 1 : N (apontamentos coletados) | `Movimento.idCentroTrabalho` | `Movimento.cs:56-70`; `CentroTrabalhoDAO.cs:235-253` (JOIN OrdemProducao×Movimento×Historico) |
 | `OrdemProducao` → `Movimento` | 1 : N | `Movimento.idOrdemProducao` | `Movimento.cs:10-24` |
-| `Movimento` → `Item` (Artigo) | N : 1 indireto via `OrdemProducao.CdItem` | dado coletado refere-se ao artigo da ordem | `CTOnlineController.cs:242-243` |
+| `Movimento` → `Item` | N : 1 indireto via `OrdemProducao.CdItem` | dado coletado refere-se ao item da ordem | `CTOnlineController.cs:242-243` |
 | `Estabelecimento` → `ProdutoColetores` | 1 : 1 (flag) | ativa o módulo/painel de coletores | `Estabelecimento.cs:12`; `EstabelecimentoDAO.cs:98-100` |
 | `Usuario` → `Estabelecimento` | N : 1 (+ `EstabelecimentoConsulta` para usuários multi-estab) | `Usuario.idEstabelecimento` / `EstabelecimentoConsulta.idUsuario` | `EstabelecimentoDAO.cs:138-140` |
 
@@ -162,7 +162,7 @@ O "coletor" tem duas facetas: (a) o **dispositivo físico** (IOT ou Terminal na 
     └──┬───┬───┬───┘  └────────────────┘
        │   │   │                       │
        │   │   └──(pivot N:M)──>┌──────▼──────┐
-       │   │                    │  ARTIGO(Item)│
+       │   │                    │    ITEM     │
        │   └──(1:1 via CT-IOT)─>┌─────────────┐
        │                        │  IOT(coletor)│
        │                        └──────┬──────┘
@@ -186,7 +186,7 @@ O "coletor" tem duas facetas: (a) o **dispositivo físico** (IOT ou Terminal na 
 
 ### Resumo do caminho de dados
 ```
-Estabelecimento ──(via Calendario)──> CentroTrabalho ──(pivot CentroTrabalhoItem)──> Artigo(Item)
+Estabelecimento ──(via Calendario)──> CentroTrabalho ──(pivot CentroTrabalhoItem)──> Item
                                           │
                                           ├──(CentroTrabalhoIOT)──> IOT (coletor físico) ── telemetria ──┐
                                           │                                                              │
@@ -206,7 +206,7 @@ Estabelecimento ──(via Calendario)──> CentroTrabalho ──(pivot Centro
 |---|---|---|
 | 1 | `Octopus.Modelo/Principal/Estabelecimento.cs` | Tenancy + flags `ProdutoColetores`/`ProdutoManufatura` |
 | 2 | `Octopus.Modelo/Manufatura/CentroTrabalho.cs` | Entidade central do fluxo |
-| 3 | `Octopus.Modelo/Manufatura/Item.cs` | Artigos |
+| 3 | `Octopus.Modelo/Manufatura/Item.cs` | Itens |
 | 4 | `Octopus.Modelo/Manufatura/CentroTrabalhoItem.cs` | Pivot CT↔Item |
 | 5 | `Octopus.Modelo/Manufatura/IOT.cs` + `CentrosTrabalhoIOT.cs` | Coletor físico e vínculo ao CT |
 | 6 | `Octopus.Modelo/Manufatura/Terminais.cs` | App de borda |
